@@ -183,7 +183,7 @@ const DataTableTemporalHeaderCell = ({
   onTimeColumnChange,
   datasourceId,
   isOriginalTimeColumn,
-  displayLabel,
+  columnLabel,
 }: {
   columnName: string;
   onTimeColumnChange: (
@@ -192,7 +192,7 @@ const DataTableTemporalHeaderCell = ({
   ) => void;
   datasourceId?: string;
   isOriginalTimeColumn: boolean;
-  displayLabel?: string;
+  columnLabel?: string;
 }) => {
   const theme = useTheme();
 
@@ -236,11 +236,36 @@ const DataTableTemporalHeaderCell = ({
           onClick={(e: React.MouseEvent<HTMLElement>) => e.stopPropagation()}
         />
       </Popover>
-      {displayLabel ?? columnName}
+      {columnLabel ?? columnName}
     </span>
   ) : (
-    <span>{displayLabel ?? columnName}</span>
+    <span>{columnLabel ?? columnName}</span>
   );
+};
+
+const DataTableHeaderCell = ({
+  columnName,
+  columnLabel,
+}: {
+  columnName: string;
+  columnLabel?: string;
+}) => {
+  // Use label if provided, otherwise use column name
+  // as header
+  const displayText = columnLabel || columnName;
+  if (columnLabel && columnLabel !== columnName) {
+    return (
+      <Popover
+        content={`Column name: ${columnName}`}
+        placement="bottomLeft"
+        arrow={{ pointAtCenter: true }}
+      >
+        <span>{displayText}</span>
+      </Popover>
+    );
+  }
+
+  return <span>{displayText}</span>;
 };
 
 export const useFilteredTableData = (
@@ -273,13 +298,13 @@ const timeFormatter = getTimeFormatter(TimeFormats.DATABASE_DATETIME);
 
 export const useTableColumns = (
   colnames?: string[],
+  collabels?: string[],
   coltypes?: GenericDataType[],
   data?: Record<string, any>[],
   datasourceId?: string,
   isVisible?: boolean,
   moreConfigs?: { [key: string]: Partial<Column> },
   allowHTML?: boolean,
-  columnDisplayNames?: Record<string, string>,
 ) => {
   const [originalFormattedTimeColumns, setOriginalFormattedTimeColumns] =
     useState<string[]>(getTimeColumns(datasourceId));
@@ -324,13 +349,13 @@ export const useTableColumns = (
             .map((key, index) => {
               const colType = coltypes?.[index];
               const firstValue = data[0][key];
-              const headerLabel = columnDisplayNames?.[key] ?? key;
               const originalFormattedTimeColumnIndex =
                 colType === GenericDataType.Temporal
                   ? originalFormattedTimeColumns.indexOf(key)
                   : -1;
               const isOriginalTimeColumn =
                 originalFormattedTimeColumns.includes(key);
+              const label = collabels?.[index];
               return {
                 // react-table requires a non-empty id, therefore we introduce a fallback value in case the key is empty
                 id: key || String(index),
@@ -343,10 +368,10 @@ export const useTableColumns = (
                       datasourceId={datasourceId}
                       onTimeColumnChange={onTimeColumnChange}
                       isOriginalTimeColumn={isOriginalTimeColumn}
-                      displayLabel={headerLabel}
+                      displayLabel={label}
                     />
                   ) : (
-                    headerLabel
+                    <DataTableHeaderCell columnName={key} columnLabel={label} />
                   ),
                 Cell: ({ value }) => {
                   if (value === true) {
@@ -378,10 +403,10 @@ export const useTableColumns = (
       colnames,
       data,
       coltypes,
+      collabels,
       datasourceId,
       moreConfigs,
       originalFormattedTimeColumns,
-      columnDisplayNames,
     ],
   );
 };
