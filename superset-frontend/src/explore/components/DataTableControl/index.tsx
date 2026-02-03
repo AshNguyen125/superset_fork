@@ -180,19 +180,19 @@ const FormatPickerLabel = styled.span`
 
 const DataTableTemporalHeaderCell = ({
   columnName,
+  columnLabel,
   onTimeColumnChange,
   datasourceId,
   isOriginalTimeColumn,
-  columnLabel,
 }: {
   columnName: string;
+  columnLabel?: string;
   onTimeColumnChange: (
     columnName: string,
     columnType: FormatPickerValue,
   ) => void;
   datasourceId?: string;
   isOriginalTimeColumn: boolean;
-  columnLabel?: string;
 }) => {
   const theme = useTheme();
 
@@ -368,7 +368,7 @@ export const useTableColumns = (
                       datasourceId={datasourceId}
                       onTimeColumnChange={onTimeColumnChange}
                       isOriginalTimeColumn={isOriginalTimeColumn}
-                      displayLabel={label}
+                      columnLabel={label}
                     />
                   ) : (
                     <DataTableHeaderCell columnName={key} columnLabel={label} />
