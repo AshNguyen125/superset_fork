@@ -120,8 +120,8 @@ export const GlobalStyles = () => {
            keyboard focus indicator. Uses :focus-visible to avoid showing on mouse clicks.
            Individual components can override with their own focus styles. */
         *:focus-visible {
-          outline: 2px solid ${theme.colorPrimary};
-          outline-offset: 2px;
+          outline: 2px solid ${theme.colorPrimary} !important;
+          outline-offset: 2px !important;
         }
       `}
     />
