@@ -254,12 +254,11 @@ def validate_adhoc_subquery(
     :raise SupersetSecurityException if sql contains sub-queries or
     nested sub-queries with table
     """
-    # Step 1: Construct the SQL to parse for validation.
     # Strip Jinja before parsing to avoid syntax errors while keeping SQL structure.
     clean_sql = strip_jinja(sql)
     parse_sql = f"SELECT * WHERE {clean_sql}" if is_predicate else clean_sql
 
-    # Step 2: Parse — SQLStatement raises SupersetParseError for multi-statement SQL
+    # SQLStatement raises SupersetParseError for multi-statement SQL
     # (e.g. "1=1; DROP TABLE users"), which we surface as a security exception.
     try:
         parsed_statement = SQLStatement(parse_sql, engine)
