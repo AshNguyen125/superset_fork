@@ -23,11 +23,8 @@ Create Date: 2026-05-04 18:16:36.080927
 """
 
 # revision identifiers, used by Alembic.
-revision = 'e61ccaa02483'
-down_revision = ('ce6bd21901ab', '884a2115ebd3')
-
-from alembic import op
-import sqlalchemy as sa
+revision = "e61ccaa02483"
+down_revision = ("ce6bd21901ab", "884a2115ebd3")
 
 
 def upgrade():

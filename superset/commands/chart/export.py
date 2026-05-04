@@ -80,15 +80,6 @@ class ExportChartsCommand(ExportModelsCommand):
         if feature_flag_manager.is_feature_enabled("TAGGING_SYSTEM"):
             tags = getattr(model, "tags", [])
             payload["tags"] = [tag.name for tag in tags if tag.type == TagType.custom]
-        # Handle deck.gl charts with multiple slices
-        if (
-            model.viz_type == "deck_multi"
-            and export_related
-            and payload["params"].get("deck_slices")
-        ):
-            slice_ids = payload["params"].get("deck_slices")
-            slices = ChartDAO.find_by_ids(slice_ids)
-            payload["params"]["deck_uuids"] = [str(slc.uuid) for slc in slices]
 
         # Replace annotation layer/chart integer IDs with UUIDs for portability
         if isinstance(payload.get("params"), dict):
