@@ -3046,6 +3046,10 @@ def test_tokenize_kql(kql: str, expected: list[tuple[KQLTokenType, str]]) -> Non
         ),
         ("SELECT 1 UNION SELECT 2", "postgresql", False),
         ("SELECT 1 UNION ALL SELECT 2", "postgresql", False),
+        # Multi-way UNIONs nest as Union(Union(Select, Select), Select) in sqlglot;
+        # ensure the inner components are not mis-classified as subqueries.
+        ("SELECT 1 UNION SELECT 2 UNION SELECT 3", "postgresql", False),
+        ("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3", "postgresql", False),
         ("SELECT 1 EXCEPT SELECT 2", "postgresql", False),
         ("SELECT 1 INTERSECT SELECT 2", "postgresql", False),
         ("SELECT * FROM (SELECT 1 UNION SELECT 2)", "postgresql", True),

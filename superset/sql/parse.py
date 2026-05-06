@@ -931,25 +931,27 @@ class SQLStatement(BaseSQLStatement[exp.Expression]):
 
         :return: True if the statement has a subquery.
         """
-        # A subquery is any Select or set operation (Union, Except, Intersect)
-        # that is contained within another expression (like Subquery, In, Exists).
+        _set_ops = (exp.Union, exp.Except, exp.Intersect)
         for node in self._parsed.walk():
             if isinstance(node, exp.Subquery):
                 return True
 
-            # If we find a Select or set operation that isn't the root, it's a subquery.
             if (
-                isinstance(node, (exp.Select, exp.Union, exp.Except, exp.Intersect))
+                isinstance(node, (exp.Select, *_set_ops))
                 and node != self._parsed
             ):
-                # If the root is a set operation, its direct children are its
-                # components, not subqueries in the security sense.
-                if (
-                    isinstance(self._parsed, (exp.Union, exp.Except, exp.Intersect))
-                    and node.parent == self._parsed
-                ):
-                    continue
-                return True
+                # A node is part of the top-level set-operation chain (and therefore
+                # NOT a subquery) only when the root itself is a set operation AND
+                # every ancestor between this node and the root is also a set
+                # operation.  This correctly handles multi-way UNIONs like
+                # A UNION B UNION C whose AST nests as Union(Union(A, B), C).
+                if not isinstance(self._parsed, _set_ops):
+                    return True
+                parent = node.parent
+                while parent is not None and parent != self._parsed:
+                    if not isinstance(parent, _set_ops):
+                        return True
+                    parent = parent.parent
         return False
 
     def parse_predicate(self, predicate: str) -> exp.Expression:
