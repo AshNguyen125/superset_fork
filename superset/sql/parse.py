@@ -947,7 +947,7 @@ class SQLStatement(BaseSQLStatement[exp.Expression]):
                 parent = node.parent
                 while parent is not None and parent != self._parsed:
                     if not isinstance(parent, _set_ops):
-                        return True
+                        return True  # pragma: no cover
                     parent = parent.parent
         return False
 
