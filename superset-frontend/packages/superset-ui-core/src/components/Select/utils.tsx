@@ -202,6 +202,7 @@ export const dropDownRenderHelper = (
 };
 
 // Strips surrounding double quotes from a string, e.g. `"foo"` → `foo`.
+// TODO(antd): drop once https://github.com/ant-design/ant-design/issues/57820 ships.
 export function stripSurroundingQuotes(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length > 1 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
@@ -257,6 +258,7 @@ export const mapOptions = (values: SelectOptionsType): Record<string, any>[] =>
   }));
 
 // Splits text by separators, preserving commas inside double quotes.
+// TODO(antd): drop once https://github.com/ant-design/ant-design/issues/57820 ships.
 export function splitWithQuoteEscaping(
   text: string,
   separators: string[],
@@ -292,6 +294,7 @@ export function splitWithQuoteEscaping(
 }
 
 // Returns the index of the last separator not inside double quotes, or -1.
+// TODO(antd): drop once https://github.com/ant-design/ant-design/issues/57820 ships.
 export function findLastUnquotedSeparatorIndex(
   text: string,
   separator: string,
