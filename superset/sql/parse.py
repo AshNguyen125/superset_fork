@@ -936,10 +936,7 @@ class SQLStatement(BaseSQLStatement[exp.Expression]):
             if isinstance(node, exp.Subquery):
                 return True
 
-            if (
-                isinstance(node, (exp.Select, *_set_ops))
-                and node != self._parsed
-            ):
+            if isinstance(node, (exp.Select, *_set_ops)) and node != self._parsed:
                 # A node is part of the top-level set-operation chain (and therefore
                 # NOT a subquery) only when the root itself is a set operation AND
                 # every ancestor between this node and the root is also a set
