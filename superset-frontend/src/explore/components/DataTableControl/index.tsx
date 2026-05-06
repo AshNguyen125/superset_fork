@@ -351,78 +351,83 @@ export const useTableColumns = (
     }
   }, [datasourceId, isVisible]);
 
-  return useMemo(
-    () =>
-      colnames && data?.length
-        ? colnames
-            .filter((column: string) => Object.keys(data[0]).includes(column))
-            .map((key, index) => {
-              const originalIndex = (colnames || []).indexOf(key);
-              const colType = coltypes?.[originalIndex];
-              const colLabel = collabels?.[originalIndex];
-              const firstValue = data[0][key];
-              const originalFormattedTimeColumnIndex =
-                colType === GenericDataType.Temporal
-                  ? originalFormattedTimeColumns.indexOf(key)
-                  : -1;
-              const isOriginalTimeColumn =
-                originalFormattedTimeColumns.includes(key);
-              return {
-                // react-table requires a non-empty id, therefore we introduce a fallback value in case the key is empty
-                id: key || String(index),
-                accessor: (row: Record<string, any>) => row[key],
-                Header:
-                  colType === GenericDataType.Temporal &&
-                  typeof firstValue !== 'string' ? (
-                    <DataTableTemporalHeaderCell
-                      columnName={key}
-                      datasourceId={datasourceId}
-                      onTimeColumnChange={onTimeColumnChange}
-                      isOriginalTimeColumn={isOriginalTimeColumn}
-                      columnLabel={colLabel}
-                    />
-                  ) : (
-                    <DataTableHeaderCell
-                      columnName={key}
-                      columnLabel={colLabel}
-                    />
-                  ),
-                Cell: ({ value }) => {
-                  if (value === true) {
-                    return Constants.BOOL_TRUE_DISPLAY;
-                  }
-                  if (value === false) {
-                    return Constants.BOOL_FALSE_DISPLAY;
-                  }
-                  if (value === null) {
-                    return <CellNull>{Constants.NULL_DISPLAY}</CellNull>;
-                  }
-                  if (
-                    colType === GenericDataType.Temporal &&
-                    originalFormattedTimeColumnIndex === -1 &&
-                    typeof value === 'number'
-                  ) {
-                    return timeFormatter(value);
-                  }
-                  if (typeof value === 'string' && allowHTML) {
-                    return safeHtmlSpan(value);
-                  }
-                  return String(value);
-                },
-                ...moreConfigs?.[key],
-              } as Column;
-            })
-        : [],
-    [
-      colnames,
-      data,
-      coltypes,
-      originalFormattedTimeColumns,
-      collabels,
-      datasourceId,
-      onTimeColumnChange,
-      moreConfigs,
-      allowHTML,
-    ],
-  );
+  return useMemo(() => {
+    if (!colnames || !data?.length) return [];
+    const firstRow = data[0];
+    // Only keep columns that exist in data
+    const validKeys = new Set(Object.keys(firstRow));
+    // Precompute original index mapping once as filter (below) may realign index on duplicates
+    const colIndexMap = new Map<string, number>();
+    colnames.forEach((col, i) => {
+      if (!colIndexMap.has(col)) {
+        colIndexMap.set(col, i);
+      }
+    });
+    const timeColumnIndexMap = new Map<string, number>();
+    originalFormattedTimeColumns.forEach((col, i) => {
+      if (!timeColumnIndexMap.has(col)) {
+        timeColumnIndexMap.set(col, i);
+      }
+    });
+    return colnames
+      .filter(key => validKeys.has(key))
+      .map((key, index) => {
+        const originalIndex = colIndexMap.get(key);
+        const colType = coltypes?.[originalIndex!];
+        const colLabel = collabels?.[originalIndex!];
+        const firstValue = firstRow[key];
+        const originalFormattedTimeColumnIndex =
+          colType === GenericDataType.Temporal
+            ? (timeColumnIndexMap.get(key) ?? -1)
+            : -1;
+        const isOriginalTimeColumn = timeColumnIndexMap.has(key);
+        return {
+          // react-table requires a non-empty id, therefore we introduce a fallback value in case the key is empty
+          id: key || String(index),
+          accessor: (row: Record<string, any>) => row[key],
+          Header:
+            colType === GenericDataType.Temporal &&
+            typeof firstValue !== 'string' ? (
+              <DataTableTemporalHeaderCell
+                columnName={key}
+                datasourceId={datasourceId}
+                onTimeColumnChange={onTimeColumnChange}
+                isOriginalTimeColumn={isOriginalTimeColumn}
+                columnLabel={colLabel}
+              />
+            ) : (
+              <DataTableHeaderCell columnName={key} columnLabel={colLabel} />
+            ),
+          Cell: ({ value }: { value: any }) => {
+            if (value === true) return Constants.BOOL_TRUE_DISPLAY;
+            if (value === false) return Constants.BOOL_FALSE_DISPLAY;
+            if (value === null) {
+              return <CellNull>{Constants.NULL_DISPLAY}</CellNull>;
+            }
+            if (
+              colType === GenericDataType.Temporal &&
+              originalFormattedTimeColumnIndex === -1 &&
+              typeof value === 'number'
+            ) {
+              return timeFormatter(value);
+            }
+            if (typeof value === 'string' && allowHTML) {
+              return safeHtmlSpan(value);
+            }
+            return String(value);
+          },
+          ...moreConfigs?.[key],
+        };
+      });
+  }, [
+    colnames,
+    data,
+    coltypes,
+    originalFormattedTimeColumns,
+    collabels,
+    datasourceId,
+    onTimeColumnChange,
+    moreConfigs,
+    allowHTML,
+  ]);
 };
