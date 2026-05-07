@@ -177,7 +177,6 @@ const StyledCol = styled(Col)`
     display: flex;
     flex-wrap: wrap;
     gap: ${theme.sizeUnit * 4}px;
-    flex-wrap: wrap;
   `}
 `;
 
