@@ -59,10 +59,8 @@ test('should render the colors', () => {
 
 test('should render aria-label with scheme name on the swatch container', () => {
   setup();
-  const option = screen.getByRole('option', {
-    name: 'Color scheme: Superset Colors',
-  });
-  expect(option).toBeInTheDocument();
+  const labelled = screen.getByLabelText('Color scheme: Superset Colors');
+  expect(labelled).toBeInTheDocument();
 });
 
 test('color swatches should be aria-hidden', () => {
