@@ -2311,10 +2311,11 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                     adhoc_col = c
                     break
         if adhoc_col:
-            return self.adhoc_column_to_sqla(
+            sqla_col, _ = self.adhoc_column_to_sqla(
                 col=adhoc_col,
                 template_processor=template_processor,
             )
+            return sqla_col
         return None
 
     def _get_top_groups(
