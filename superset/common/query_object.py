@@ -32,7 +32,6 @@ from superset.exceptions import (
     InvalidPostProcessingError,
     QueryClauseValidationException,
     QueryObjectValidationError,
-    SupersetSecurityException,
 )
 from superset.extensions import event_logger
 from superset.sql.parse import sanitize_clause, transpile_to_dialect
@@ -337,7 +336,6 @@ class QueryObject:  # pylint: disable=too-many-instance-attributes
 
     def _sanitize_filters(self) -> None:
         from superset.jinja_context import get_template_processor
-        from superset.models.helpers import validate_adhoc_subquery
 
         needs_transpilation = self.extras.get("transpile_to_dialect", False)
 
@@ -362,30 +360,20 @@ class QueryObject:  # pylint: disable=too-many-instance-attributes
                     engine = database.db_engine_spec.engine
 
                     if needs_transpilation:
-                        clause = transpile_to_dialect(clause, engine)
-
-                    # Validate the predicate against subquery and set-operation
-                    # injection (e.g. UNION bypass). Raises SupersetSecurityException
-                    # if the clause contains a disallowed subquery or set operation.
-                    clause = validate_adhoc_subquery(
-                        clause,
-                        database,
-                        self.datasource.catalog,
-                        self.datasource.schema or "",
-                        engine,
-                        is_predicate=True,
-                    )
+                        # source_engine=engine ensures idempotency: this
+                        # method can run more than once (validate() is called
+                        # from both raise_for_access and get_df_payload), so
+                        # the second pass must be able to re-parse the
+                        # dialect-specific output (e.g. BigQuery backticks)
+                        # produced by the first pass.
+                        clause = transpile_to_dialect(
+                            clause, engine, source_engine=engine, identify=True
+                        )
 
                     sanitized_clause = sanitize_clause(clause, engine)
-                    if sanitized_clause != clause:
-                        self.extras[param] = sanitized_clause
-                except (
-                    QueryClauseValidationException,
-                    SupersetSecurityException,
-                ) as ex:
-                    raise QueryObjectValidationError(
-                        ex.message if hasattr(ex, "message") else str(ex)
-                    ) from ex
+                    self.extras[param] = sanitized_clause
+                except QueryClauseValidationException as ex:
+                    raise QueryObjectValidationError(ex.message) from ex
 
     def _validate_there_are_no_missing_series(self) -> None:
         missing_series = [col for col in self.series_columns if col not in self.columns]
