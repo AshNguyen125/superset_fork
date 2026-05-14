@@ -23,7 +23,6 @@ chart configuration.
 """
 
 import logging
-from typing import Any, Dict
 
 from fastmcp import Context
 from superset_core.mcp.decorators import tool, ToolAnnotations
@@ -40,6 +39,8 @@ from superset.mcp_service.chart.compile import validate_and_compile
 from superset.mcp_service.chart.schemas import (
     GenerateExploreLinkRequest,
 )
+from superset.mcp_service.common.error_schemas import ChartGenerationError
+from superset.mcp_service.explore.schemas import GenerateExploreLinkResponse
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ logger = logging.getLogger(__name__)
 )
 async def generate_explore_link(
     request: GenerateExploreLinkRequest, ctx: Context
-) -> Dict[str, Any]:
+) -> GenerateExploreLinkResponse:
     """Generate explore URL for interactive visualization.
 
     PREFERRED TOOL for most visualization requests.
@@ -132,16 +133,26 @@ async def generate_explore_link(
                 await ctx.warning(
                     "Dataset not found: dataset_id=%s" % (request.dataset_id,)
                 )
-                return {
-                    "url": "",
-                    "form_data": {},
-                    "form_data_key": None,
-                    "chart_type_label": None,
-                    "error": (
-                        f"Dataset not found: {request.dataset_id}. "
-                        "Use list_datasets to find valid dataset IDs."
-                    ),
-                }
+                return GenerateExploreLinkResponse(
+                    url="",
+                    form_data={},
+                    form_data_key=None,
+                    chart_type_label=None,
+                    error=ChartGenerationError(
+                        error_type="dataset_not_found",
+                        message=f"Dataset not found: {request.dataset_id}.",
+                        details=(
+                            f"No dataset found with identifier "
+                            f"'{request.dataset_id}'. Use list_datasets to "
+                            "find valid dataset IDs."
+                        ),
+                        suggestions=[
+                            "Verify the dataset ID or UUID is correct",
+                            "Use the list_datasets tool to find available datasets",
+                        ],
+                    ).model_dump(),
+                    success=False,
+                )
 
             if not has_dataset_access(dataset):
                 logger.warning(
@@ -151,16 +162,28 @@ async def generate_explore_link(
                 await ctx.warning(
                     "Dataset access denied: dataset_id=%s" % (request.dataset_id,)
                 )
-                return {
-                    "url": "",
-                    "form_data": {},
-                    "form_data_key": None,
-                    "chart_type_label": None,
-                    "error": (
-                        f"Dataset not found: {request.dataset_id}. "
-                        "Use list_datasets to find valid dataset IDs."
-                    ),
-                }
+                # User-facing message stays generic to avoid leaking dataset
+                # existence; error_type lets programmatic callers distinguish.
+                return GenerateExploreLinkResponse(
+                    url="",
+                    form_data={},
+                    form_data_key=None,
+                    chart_type_label=None,
+                    error=ChartGenerationError(
+                        error_type="permission_denied",
+                        message=f"Dataset not found: {request.dataset_id}.",
+                        details=(
+                            f"No dataset found with identifier "
+                            f"'{request.dataset_id}'. Use list_datasets to "
+                            "find valid dataset IDs."
+                        ),
+                        suggestions=[
+                            "Check that you have access to this dataset",
+                            "Use the list_datasets tool to find available datasets",
+                        ],
+                    ).model_dump(),
+                    success=False,
+                )
 
         # When no config is provided, return a default explore URL that opens
         # the dataset in Superset without a preconfigured chart.
@@ -234,24 +257,23 @@ async def generate_explore_link(
             await ctx.warning(
                 "Explore link validation failed: error=%s" % (compile_result.error,)
             )
-            error_payload: Dict[str, Any]
             if compile_result.error_obj is not None:
                 error_payload = compile_result.error_obj.model_dump()
             else:
-                error_payload = {
-                    "error_type": "validation_error",
-                    "message": "Explore link validation failed",
-                    "details": compile_result.error or "",
-                    "error_code": compile_result.error_code,
-                    "suggestions": [],
-                }
-            return {
-                "url": "",
-                "form_data": form_data,
-                "form_data_key": None,
-                "chart_type_label": None,
-                "error": error_payload,
-            }
+                error_payload = ChartGenerationError(
+                    error_type="validation_error",
+                    message="Explore link validation failed",
+                    details=compile_result.error or "",
+                    error_code=compile_result.error_code,
+                ).model_dump()
+            return GenerateExploreLinkResponse(
+                url="",
+                form_data=form_data,
+                form_data_key=None,
+                chart_type_label=None,
+                error=error_payload,
+                success=False,
+            )
 
         await ctx.report_progress(3, 4, "Generating explore URL")
         with event_logger.log_context(
@@ -272,13 +294,14 @@ async def generate_explore_link(
             % (len(explore_url or ""), request.dataset_id, form_data_key)
         )
 
-        return {
-            "url": explore_url,
-            "form_data": form_data,
-            "form_data_key": form_data_key,
-            "chart_type_label": get_table_chart_type_label(form_data.get("viz_type")),
-            "error": None,
-        }
+        return GenerateExploreLinkResponse(
+            url=explore_url,
+            form_data=form_data,
+            form_data_key=form_data_key,
+            chart_type_label=get_table_chart_type_label(form_data.get("viz_type")),
+            error=None,
+            success=True,
+        )
 
     except Exception as e:
         await ctx.error(
@@ -290,10 +313,15 @@ async def generate_explore_link(
                 str(e),
             )
         )
-        return {
-            "url": "",
-            "form_data": {},
-            "form_data_key": None,
-            "chart_type_label": None,
-            "error": f"Failed to generate explore link: {str(e)}",
-        }
+        return GenerateExploreLinkResponse(
+            url="",
+            form_data={},
+            form_data_key=None,
+            chart_type_label=None,
+            error=ChartGenerationError(
+                error_type="generation_failed",
+                message="Failed to generate explore link",
+                details=str(e),
+            ).model_dump(),
+            success=False,
+        )
