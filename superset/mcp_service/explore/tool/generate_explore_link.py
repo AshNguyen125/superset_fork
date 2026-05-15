@@ -27,6 +27,7 @@ import logging
 from fastmcp import Context
 from superset_core.mcp.decorators import tool, ToolAnnotations
 
+from superset.daos.dataset import DatasetDAO
 from superset.extensions import event_logger
 from superset.mcp_service.auth import has_dataset_access
 from superset.mcp_service.chart.chart_helpers import extract_form_data_key_from_url
@@ -39,8 +40,10 @@ from superset.mcp_service.chart.compile import validate_and_compile
 from superset.mcp_service.chart.schemas import (
     GenerateExploreLinkRequest,
 )
+from superset.mcp_service.chart.validation.dataset_validator import DatasetValidator
 from superset.mcp_service.common.error_schemas import ChartGenerationError
 from superset.mcp_service.explore.schemas import GenerateExploreLinkResponse
+from superset.mcp_service.utils.url_utils import get_superset_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +117,6 @@ async def generate_explore_link(
     try:
         await ctx.report_progress(1, 4, "Validating dataset exists")
         with event_logger.log_context(action="mcp.generate_explore_link.dataset_check"):
-            from superset.daos.dataset import DatasetDAO
-
             dataset = None
             if isinstance(request.dataset_id, int) or (
                 isinstance(request.dataset_id, str) and request.dataset_id.isdigit()
@@ -140,6 +141,7 @@ async def generate_explore_link(
                     chart_type_label=None,
                     error=ChartGenerationError(
                         error_type="dataset_not_found",
+                        error_code="MCP_EXPLORE_DATASET_NOT_FOUND",
                         message=f"Dataset not found: {request.dataset_id}.",
                         details=(
                             f"No dataset found with identifier "
@@ -150,7 +152,7 @@ async def generate_explore_link(
                             "Verify the dataset ID or UUID is correct",
                             "Use the list_datasets tool to find available datasets",
                         ],
-                    ).model_dump(),
+                    ),
                     success=False,
                 )
 
@@ -171,6 +173,11 @@ async def generate_explore_link(
                     chart_type_label=None,
                     error=ChartGenerationError(
                         error_type="permission_denied",
+                        # Same code as the not-found path: the user-visible
+                        # message is intentionally indistinguishable so
+                        # access policy isn't disclosed; ``error_type`` is
+                        # the programmatic distinguisher.
+                        error_code="MCP_EXPLORE_DATASET_NOT_FOUND",
                         message=f"Dataset not found: {request.dataset_id}.",
                         details=(
                             f"No dataset found with identifier "
@@ -181,7 +188,7 @@ async def generate_explore_link(
                             "Check that you have access to this dataset",
                             "Use the list_datasets tool to find available datasets",
                         ],
-                    ).model_dump(),
+                    ),
                     success=False,
                 )
 
@@ -189,8 +196,6 @@ async def generate_explore_link(
         # the dataset in Superset without a preconfigured chart.
         if request.config is None:
             await ctx.report_progress(4, 4, "URL generation complete")
-            from superset.mcp_service.utils.url_utils import get_superset_base_url
-
             base_url = get_superset_base_url()
             default_url = (
                 f"{base_url}/explore/?datasource_type=table&datasource_id={dataset.id}"
@@ -198,13 +203,14 @@ async def generate_explore_link(
             await ctx.info(
                 "Default explore link generated: dataset_id=%s" % (request.dataset_id,)
             )
-            return {
-                "url": default_url,
-                "form_data": {},
-                "form_data_key": None,
-                "chart_type_label": None,
-                "error": None,
-            }
+            return GenerateExploreLinkResponse(
+                url=default_url,
+                form_data={},
+                form_data_key=None,
+                chart_type_label=None,
+                error=None,
+                success=True,
+            )
 
         await ctx.report_progress(2, 4, "Converting configuration to form data")
         with event_logger.log_context(action="mcp.generate_explore_link.form_data"):
@@ -214,14 +220,28 @@ async def generate_explore_link(
             # Normalize column names to match canonical dataset column names
             # This fixes case sensitivity issues (e.g., 'order_date' vs 'OrderDate')
             try:
-                from superset.mcp_service.chart.validation.dataset_validator import (
-                    DatasetValidator,
-                )
-
                 normalized_config = DatasetValidator.normalize_column_names(
                     config, request.dataset_id
                 )
-            except (ImportError, AttributeError, KeyError, ValueError, TypeError):
+            except (
+                ImportError,
+                AttributeError,
+                KeyError,
+                ValueError,
+                TypeError,
+            ) as norm_err:
+                logger.warning(
+                    "Column normalization failed for dataset_id=%s; falling back "
+                    "to caller-supplied config. %s: %s",
+                    request.dataset_id,
+                    type(norm_err).__name__,
+                    norm_err,
+                )
+                await ctx.warning(
+                    "Column normalization failed for dataset_id=%s; using config "
+                    "as-supplied. Chart may behave unexpectedly if column names "
+                    "differ in case." % (request.dataset_id,)
+                )
                 normalized_config = config
 
             # Map config to form_data using shared utilities
@@ -258,14 +278,14 @@ async def generate_explore_link(
                 "Explore link validation failed: error=%s" % (compile_result.error,)
             )
             if compile_result.error_obj is not None:
-                error_payload = compile_result.error_obj.model_dump()
+                error_payload = compile_result.error_obj
             else:
                 error_payload = ChartGenerationError(
                     error_type="validation_error",
                     message="Explore link validation failed",
                     details=compile_result.error or "",
                     error_code=compile_result.error_code,
-                ).model_dump()
+                )
             return GenerateExploreLinkResponse(
                 url="",
                 form_data=form_data,
@@ -313,6 +333,10 @@ async def generate_explore_link(
                 str(e),
             )
         )
+        # ``details`` intentionally omits ``str(e)`` so internal info
+        # (file paths, schema names) isn't echoed to the MCP response.
+        # The raw exception is already captured in the server-side log
+        # above via ``ctx.error``.
         return GenerateExploreLinkResponse(
             url="",
             form_data={},
@@ -320,8 +344,12 @@ async def generate_explore_link(
             chart_type_label=None,
             error=ChartGenerationError(
                 error_type="generation_failed",
+                error_code="MCP_EXPLORE_GENERATION_FAILED",
                 message="Failed to generate explore link",
-                details=str(e),
-            ).model_dump(),
+                details=(
+                    "An unexpected error occurred; check server logs "
+                    "for details."
+                ),
+            ),
             success=False,
         )
