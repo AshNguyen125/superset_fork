@@ -475,6 +475,14 @@ class BaseSQLStatement(Generic[InternalRepresentation]):
         """
         raise NotImplementedError()
 
+    def is_destructive(self) -> bool:
+        """
+        Check if the statement is destructive DDL (DROP, TRUNCATE, ALTER).
+
+        :return: True if the statement is destructive DDL.
+        """
+        raise NotImplementedError()
+
     def optimize(self) -> BaseSQLStatement[InternalRepresentation]:
         """
         Return optimized statement.
@@ -769,6 +777,31 @@ class SQLStatement(BaseSQLStatement[exp.Expression]):
         Return True if the statement is a set operation (Union, Except, Intersect).
         """
         return isinstance(self._parsed, (exp.Union, exp.Except, exp.Intersect))
+
+    def is_destructive(self) -> bool:
+        """
+        Check if the statement is destructive DDL (DROP, TRUNCATE, ALTER).
+
+        Unlike ``is_mutating()``, this excludes non-destructive DML
+        (INSERT, UPDATE, DELETE, MERGE) and CREATE.
+
+        :return: True if the statement is destructive DDL.
+        """
+        destructive_nodes = (
+            exp.Drop,
+            exp.TruncateTable,
+            exp.Alter,
+        )
+
+        for node_type in destructive_nodes:
+            if self._parsed.find(node_type):
+                return True
+
+        # Handle ALTER parsed as Command (Oracle, MS SQL dialects)
+        if isinstance(self._parsed, exp.Command) and self._parsed.name == "ALTER":
+            return True  # pragma: no cover
+
+        return False
 
     def format(self, comments: bool = True) -> str:
         """
@@ -1237,6 +1270,18 @@ class KustoKQLStatement(BaseSQLStatement[str]):
         """
         return self._parsed.startswith(".") and not self._parsed.startswith(".show")
 
+    def is_destructive(self) -> bool:
+        """
+        Check if the statement is destructive DDL.
+
+        Kusto KQL uses dot-commands for management operations. Destructive
+        operations start with ``.drop`` or ``.alter``.
+
+        :return: True if the statement is destructive DDL.
+        """
+        lower = self._parsed.lower()
+        return lower.startswith(".drop") or lower.startswith(".alter")
+
     def optimize(self) -> KustoKQLStatement:
         """
         Return optimized statement.
@@ -1382,6 +1427,14 @@ class SQLScript:
         :return: True if the script contains mutating statements
         """
         return any(statement.is_mutating() for statement in self.statements)
+
+    def has_destructive(self) -> bool:
+        """
+        Check if the script contains destructive DDL (DROP, TRUNCATE, ALTER).
+
+        :return: True if any statement is destructive DDL.
+        """
+        return any(statement.is_destructive() for statement in self.statements)
 
     def optimize(self) -> SQLScript:
         """
