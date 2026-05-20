@@ -24,6 +24,18 @@ assists people when migrating to a new version.
 
 ## Next
 
+### MCP JWT Security Hardening
+
+The MCP service JWT verifier now enforces two additional security checks:
+
+1. **Tokens with `alg=none` are rejected** — prevents unsigned token attacks (CVE-2016-5431 class). Tokens must specify a valid cryptographic algorithm matching the server configuration.
+
+2. **The `exp` (expiration) claim is required by default** — prevents indefinite token replay. Tokens without an expiration are rejected. If your identity provider legitimately issues tokens without `exp`, you can opt out by setting `MCP_JWT_REQUIRE_EXP = False` in `superset_config.py`.
+
+**Breaking change:** If you have JWT clients that issue tokens without an `exp` claim, they will now be rejected. Add `exp` to your tokens, or set `MCP_JWT_REQUIRE_EXP = False` to restore the previous behavior.
+
+**Configuration change:** The `MCP_JWT_DEBUG_ERRORS` flag now controls only the logging verbosity of the JWT verifier (DEBUG-level detailed claim values vs. WARNING-level generic categories). Security checks (algorithm validation, expiration requirement) always apply regardless of this flag. Previously, security checks only applied when `MCP_JWT_DEBUG_ERRORS = True`.
+
 ### Granular Export Controls
 
 A new feature flag `GRANULAR_EXPORT_CONTROLS` introduces three fine-grained permissions that replace the legacy `can_csv` permission:

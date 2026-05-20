@@ -271,8 +271,8 @@ async def test_valid_token(hs256_verifier):
 
 
 @pytest.mark.asyncio
-async def test_valid_token_no_expiration(hs256_verifier):
-    """Valid token without expiration should still succeed."""
+async def test_token_no_expiration_rejected(hs256_verifier):
+    """Token without expiration should be rejected when require_exp=True (default)."""
     token = _make_token(
         {"alg": "HS256", "typ": "JWT"},
         {
@@ -289,6 +289,39 @@ async def test_valid_token_no_expiration(hs256_verifier):
 
     with patch.object(hs256_verifier.jwt, "decode", return_value=claims):
         result = await hs256_verifier.load_access_token(token)
+
+    assert result is None
+    reason = _jwt_failure_reason.get()
+    assert reason == "Token missing expiration"
+
+
+@pytest.mark.asyncio
+async def test_token_no_expiration_allowed_when_not_required():
+    """Token without expiration succeeds when require_exp=False."""
+    verifier = DetailedJWTVerifier(
+        public_key="test-secret-key-for-hs256-tokens",
+        issuer="test-issuer",
+        audience="test-audience",
+        algorithm="HS256",
+        required_scopes=[],
+        require_exp=False,
+    )
+    token = _make_token(
+        {"alg": "HS256", "typ": "JWT"},
+        {
+            "sub": "user1",
+            "iss": "test-issuer",
+            "aud": "test-audience",
+        },
+    )
+    claims = {
+        "sub": "user1",
+        "iss": "test-issuer",
+        "aud": "test-audience",
+    }
+
+    with patch.object(verifier.jwt, "decode", return_value=claims):
+        result = await verifier.load_access_token(token)
 
     assert result is not None
     assert result.client_id == "user1"
@@ -724,3 +757,88 @@ async def test_catch_all_exception_sets_generic_reason(hs256_verifier):
     reason = _jwt_failure_reason.get()
     assert reason == "Token validation failed"
     assert "unexpected type" not in reason
+
+
+@pytest.mark.asyncio
+async def test_exp_zero_is_expired_not_missing(hs256_verifier):
+    """exp=0 (epoch 1970) should be reported as 'Token expired', not 'Token missing'."""
+    token = _make_token(
+        {"alg": "HS256", "typ": "JWT"},
+        {
+            "sub": "user1",
+            "iss": "test-issuer",
+            "aud": "test-audience",
+            "exp": 0,
+        },
+    )
+    claims = {
+        "sub": "user1",
+        "iss": "test-issuer",
+        "aud": "test-audience",
+        "exp": 0,
+    }
+
+    with patch.object(hs256_verifier.jwt, "decode", return_value=claims):
+        result = await hs256_verifier.load_access_token(token)
+
+    assert result is None
+    reason = _jwt_failure_reason.get()
+    assert reason == "Token expired"
+
+
+@pytest.mark.asyncio
+async def test_non_string_alg_rejected(hs256_verifier):
+    """Non-string alg (int, list, dict, None, bool) should be rejected as insecure."""
+    for bad_alg in [123, ["RS256"], {"alg": "none"}, None, True]:
+        with patch.object(
+            hs256_verifier,
+            "_decode_token_header",
+            return_value={"alg": bad_alg, "typ": "JWT"},
+        ):
+            result = await hs256_verifier.load_access_token("x.y.z")
+
+        assert result is None, f"Should reject alg={bad_alg!r}"
+        reason = _jwt_failure_reason.get()
+        assert reason == "Insecure algorithm", f"Wrong reason for alg={bad_alg!r}"
+        _jwt_failure_reason.set(None)
+
+
+@pytest.mark.asyncio
+async def test_whitespace_padded_none_alg_rejected(hs256_verifier):
+    """Whitespace-padded 'none' variants should be rejected."""
+    for padded_none in [" none ", "None", " NONE", "nOnE ", "none"]:
+        with patch.object(
+            hs256_verifier,
+            "_decode_token_header",
+            return_value={"alg": padded_none, "typ": "JWT"},
+        ):
+            result = await hs256_verifier.load_access_token("x.y.z")
+
+        assert result is None, f"Should reject alg={padded_none!r}"
+        reason = _jwt_failure_reason.get()
+        assert reason == "Insecure algorithm", f"Wrong reason for alg={padded_none!r}"
+        _jwt_failure_reason.set(None)
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_exp_rejected(hs256_verifier):
+    """Non-numeric exp claim (string, bool, list) should be rejected."""
+    for bad_exp in ["2026-01-01", True, False, [1234567890], {"exp": 123}]:
+        claims = {
+            "sub": "user1",
+            "iss": "test-issuer",
+            "aud": "test-audience",
+            "exp": bad_exp,
+        }
+        token = _make_token(
+            {"alg": "HS256", "typ": "JWT"},
+            claims,
+        )
+
+        with patch.object(hs256_verifier.jwt, "decode", return_value=claims):
+            result = await hs256_verifier.load_access_token(token)
+
+        assert result is None, f"Should reject exp={bad_exp!r}"
+        reason = _jwt_failure_reason.get()
+        assert reason == "Token missing expiration", f"Wrong reason for exp={bad_exp!r}"
+        _jwt_failure_reason.set(None)

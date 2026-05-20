@@ -49,15 +49,22 @@ MCP_DEBUG = False
 # against the FAB security_manager before execution.
 MCP_RBAC_ENABLED = True
 
-# MCP JWT Debug Errors - controls server-side JWT debug logging.
-# When False (default), uses the default JWTVerifier with minimal logging.
-# When True, uses DetailedJWTVerifier with tiered logging:
-#   - WARNING level: generic failure categories only (e.g. "Issuer mismatch")
-#   - DEBUG level: detailed claim values for troubleshooting
-#   - Secrets (e.g. HS256 keys) are NEVER logged at any level
+# MCP JWT Debug Errors - controls server-side JWT debug logging verbosity.
+# When False (default): WARNING-level logging only (generic failure categories).
+# When True: enables DEBUG-level logging with detailed claim values for
+# troubleshooting (issuer, audience, scopes, exception details).
+# Security checks (alg=none rejection, exp requirement) always apply
+# regardless of this setting.
+# Secrets (e.g. HS256 keys) are NEVER logged at any level.
 # HTTP responses ALWAYS return generic errors regardless of this setting,
 # per RFC 6750 Section 3.1. This flag NEVER affects client-facing output.
 MCP_JWT_DEBUG_ERRORS = False
+
+# MCP JWT Require Expiration - when True (default), tokens without the 'exp'
+# claim are rejected. RFC 7519 Section 4.1.4 makes 'exp' optional, but
+# requiring it prevents token replay attacks.
+# Set to False only if your IdP issues tokens without expiration intentionally.
+MCP_JWT_REQUIRE_EXP = True
 
 
 # Session configuration for local development
@@ -316,18 +323,19 @@ def create_default_mcp_auth_factory(app: Flask) -> Optional[Any]:
             common_kwargs["public_key"] = public_key
             common_kwargs["algorithm"] = app.config.get("MCP_JWT_ALGORITHM", "RS256")
 
+        from superset.mcp_service.jwt_verifier import DetailedJWTVerifier
+
+        auth_provider = DetailedJWTVerifier(
+            require_exp=app.config.get("MCP_JWT_REQUIRE_EXP", True),
+            **common_kwargs,
+        )
+
         if debug_errors:
-            # DetailedJWTVerifier: detailed server-side logging of JWT
-            # validation failures. HTTP responses are always generic per
-            # RFC 6750 Section 3.1.
-            from superset.mcp_service.jwt_verifier import DetailedJWTVerifier
+            import logging as _logging
 
-            auth_provider = DetailedJWTVerifier(**common_kwargs)
-        else:
-            # Default JWTVerifier: minimal logging, generic error responses.
-            from fastmcp.server.auth.providers.jwt import JWTVerifier
-
-            auth_provider = JWTVerifier(**common_kwargs)
+            _logging.getLogger("superset.mcp_service.jwt_verifier").setLevel(
+                _logging.DEBUG
+            )
 
         return auth_provider
     except Exception:

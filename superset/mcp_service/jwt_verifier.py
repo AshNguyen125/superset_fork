@@ -139,6 +139,10 @@ class DetailedJWTVerifier(JWTVerifier):
     Controlled by MCP_JWT_DEBUG_ERRORS config flag.
     """
 
+    def __init__(self, *, require_exp: bool = True, **kwargs: Any) -> None:
+        self.require_exp = require_exp
+        super().__init__(**kwargs)
+
     async def load_access_token(self, token: str) -> AccessToken | None:  # noqa: C901
         """
         Validate a JWT bearer token with detailed error reporting.
@@ -153,22 +157,26 @@ class DetailedJWTVerifier(JWTVerifier):
             # Step 1: Decode header and check algorithm
             try:
                 header = self._decode_token_header(token)
-            except (ValueError, DecodeError):
+            except (ValueError, DecodeError) as e:
                 reason = "Malformed token header"
                 _jwt_failure_reason.set(reason)
-                logger.debug("Malformed token header")
+                logger.debug("Malformed token header: %s", e)
                 return None
 
             token_alg = header.get("alg")
-            if not token_alg or token_alg.lower() == "none":
-                reason = "Algorithm mismatch"
+            if not isinstance(token_alg, str) or token_alg.strip().lower() == "none":
+                reason = "Insecure algorithm"
                 _jwt_failure_reason.set(reason)
-                logger.debug("Rejected token with insecure algorithm")
+                logger.debug("Rejected token with insecure algorithm: %r", token_alg)
                 return None
             if self.algorithm and token_alg != self.algorithm:
                 reason = "Algorithm mismatch"
                 _jwt_failure_reason.set(reason)
-                logger.debug("Algorithm mismatch")
+                logger.debug(
+                    "Algorithm mismatch: token=%r, expected=%r",
+                    token_alg,
+                    self.algorithm,
+                )
                 return None
 
             # Step 2: Get verification key (static or JWKS)
@@ -191,10 +199,10 @@ class DetailedJWTVerifier(JWTVerifier):
                 reason = "Token has expired (detected during decode)"
                 _jwt_failure_reason.set(reason)
                 return None
-            except JoseError:
+            except JoseError as e:
                 reason = "Token decode failed"
                 _jwt_failure_reason.set(reason)
-                logger.debug("Token decode failed")
+                logger.debug("Token decode failed: %s", e)
                 return None
 
             # Extract client ID for logging
@@ -207,16 +215,26 @@ class DetailedJWTVerifier(JWTVerifier):
 
             # Step 4: Check expiration
             exp = claims.get("exp")
-            if not exp:
-                reason = "Token missing expiration"
-                _jwt_failure_reason.set(reason)
-                logger.debug("Token missing 'exp' claim")
-                return None
-            if exp < time.time():
-                reason = "Token expired"
-                _jwt_failure_reason.set(reason)
-                logger.debug("Token expired")
-                return None
+            if exp is None:
+                if self.require_exp:
+                    reason = "Token missing expiration"
+                    _jwt_failure_reason.set(reason)
+                    logger.debug("Token missing 'exp' claim")
+                    return None
+            else:
+                if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+                    reason = "Token missing expiration"
+                    _jwt_failure_reason.set(reason)
+                    logger.debug(
+                        "Token 'exp' claim has invalid type: %s",
+                        type(exp).__name__,
+                    )
+                    return None
+                if exp < time.time():
+                    reason = "Token expired"
+                    _jwt_failure_reason.set(reason)
+                    logger.debug("Token expired: exp=%r, now=%r", exp, time.time())
+                    return None
 
             # Step 5: Validate issuer
             if self.issuer:
@@ -229,7 +247,11 @@ class DetailedJWTVerifier(JWTVerifier):
                 if not issuer_valid:
                     reason = "Issuer mismatch"
                     _jwt_failure_reason.set(reason)
-                    logger.debug("Issuer mismatch")
+                    logger.debug(
+                        "Issuer mismatch: token=%r, expected=%r",
+                        iss,
+                        self.issuer,
+                    )
                     return None
 
             # Step 6: Validate audience
@@ -252,7 +274,11 @@ class DetailedJWTVerifier(JWTVerifier):
                 if not audience_valid:
                     reason = "Audience mismatch"
                     _jwt_failure_reason.set(reason)
-                    logger.debug("Audience mismatch")
+                    logger.debug(
+                        "Audience mismatch: token=%r, expected=%r",
+                        aud,
+                        self.audience,
+                    )
                     return None
 
             # Step 7: Check required scopes
@@ -261,9 +287,14 @@ class DetailedJWTVerifier(JWTVerifier):
                 token_scopes = set(scopes)
                 required = set(self.required_scopes)
                 if not required.issubset(token_scopes):
+                    missing = required - token_scopes
                     reason = "Missing required scopes"
                     _jwt_failure_reason.set(reason)
-                    logger.debug("Missing required scopes")
+                    logger.debug(
+                        "Missing required scopes: %r, token has: %r",
+                        missing,
+                        token_scopes,
+                    )
                     return None
 
             # All validations passed
@@ -271,14 +302,14 @@ class DetailedJWTVerifier(JWTVerifier):
                 token=token,
                 client_id=str(client_id),
                 scopes=scopes,
-                expires_at=int(exp) if exp else None,
+                expires_at=int(exp) if exp is not None else None,
                 claims=dict(claims),
             )
 
-        except (ValueError, JoseError, KeyError, AttributeError, TypeError):
+        except (ValueError, JoseError, KeyError, AttributeError, TypeError) as e:
             reason = "Token validation failed"
             _jwt_failure_reason.set(reason)
-            logger.debug("Token validation failed")
+            logger.debug("Token validation failed: %s", e)
             return None
 
     def get_middleware(self) -> list[Any]:
