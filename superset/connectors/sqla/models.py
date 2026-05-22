@@ -809,25 +809,34 @@ class BaseDatasource(
     ) -> TextClause:
         """
         Process an RLS clause with security validation and template processing.
+
+        RLS clauses are WHERE-predicate fragments (e.g. ``name = 'admin'``).
+        We validate them with ``is_predicate=True`` so the parser wraps the
+        clause in ``SELECT * WHERE <clause>`` rather than the column-expression
+        wrapper ``SELECT <clause>`` used by ``_process_select_expression``.
         """
-        processed = self._process_select_expression(
-            expression=clause,
-            database_id=self.database_id,
-            engine=self.database.backend,
-            schema=self.schema,
-            template_processor=template_processor,
+        from superset.models.helpers import validate_adhoc_subquery
+
+        # Validate the raw clause for subquery injection before rendering
+        # Jinja templates.  validate_adhoc_subquery strips Jinja internally
+        # for parsing but returns the original clause unchanged when it
+        # contains template syntax, so downstream template processing is
+        # preserved.
+        validated = validate_adhoc_subquery(
+            clause,
+            self.database,
+            self.catalog,
+            self.schema or "",
+            self.database.backend,
+            is_predicate=True,
         )
 
-        if not processed:
-            # _process_select_expression returns None when the expression was not
-            # processed (e.g. Jinja templates), and may return "" for degenerate
-            # inputs. In both cases fall back to template processing to avoid
-            # generating empty parentheses `()` that would produce invalid SQL.
-            processed = (
-                template_processor.process_template(clause)
-                if template_processor
-                else clause
-            )
+        # Render Jinja templates after validation.
+        processed = (
+            template_processor.process_template(validated)
+            if template_processor
+            else validated
+        )
         return self.text(f"({processed})")
 
     def _get_processed_rls_filters(

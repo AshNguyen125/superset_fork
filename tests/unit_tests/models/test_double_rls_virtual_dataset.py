@@ -51,11 +51,9 @@ def mock_datasource() -> MagicMock:
     datasource.database.backend = "postgresql"
     datasource.database_id = 1
     datasource.id = 1
+    datasource.catalog = None
     datasource.schema = "public"
     datasource.table_name = "test_table"
-
-    # Manually add method to bypass spec limitations
-    datasource._process_select_expression = MagicMock(return_value=None)
 
     # Bind real methods so logic executes against mocked security_manager
     datasource.get_sqla_row_level_filters = (
