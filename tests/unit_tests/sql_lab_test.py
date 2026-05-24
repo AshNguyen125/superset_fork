@@ -406,12 +406,11 @@ def test_rls_in_sqllab_rejects_write_on_rls_table(mocker: MockerFixture, app) ->
 )
 def test_rls_allows_mutation_on_unprotected_table(mocker: MockerFixture, app) -> None:
     """Mutation on a table with no RLS rules is not blocked."""
-    from superset.exceptions import SupersetSecurityException
-
     query = mocker.MagicMock()
     query.limit = 0
     query.select_as_cta = False
     query.catalog = "examples"
+    query.status = QueryStatus.RUNNING
     query.database.allow_dml = True
     query.database.allow_run_async = False
     query.database.db_engine_spec = mocker.MagicMock()
@@ -420,6 +419,7 @@ def test_rls_allows_mutation_on_unprotected_table(mocker: MockerFixture, app) ->
     query.database.db_engine_spec.allows_sql_comments = True
     query.database.get_default_schema_for_query.return_value = "public"
     query.database.get_default_catalog.return_value = "examples"
+    query.to_dict.return_value = {"id": 1}
 
     mocker.patch("superset.sql_lab.get_query", return_value=query)
     mocker.patch("superset.sql_lab.db.session.commit")
@@ -430,24 +430,23 @@ def test_rls_allows_mutation_on_unprotected_table(mocker: MockerFixture, app) ->
         "superset.sql_lab.get_predicates_for_table",
         return_value=[],
     )
-    try:
-        execute_sql_statements(
-            query_id=1,
-            rendered_query="UPDATE public_table SET name='x' WHERE id=1",
-            return_results=True,
-            store_results=False,
-            start_time=None,
-            expand_data=False,
-            log_params={},
-        )
-    except SupersetSecurityException:
-        pytest.fail(
-            "SupersetSecurityException should not be raised for unprotected table"
-        )
-    except Exception:  # noqa: BLE001, S110
-        # Other exceptions from incomplete mocks are acceptable; the important
-        # assertion is that SupersetSecurityException was NOT raised.
-        pass
+
+    result_set = mocker.MagicMock()
+    result_set.size = 0
+    result_set.columns = []
+    result_set.to_pandas_df.return_value = mocker.MagicMock()
+    mocker.patch("superset.sql_lab.execute_query", return_value=result_set)
+    mocker.patch("superset.sql_lab.df_to_records", return_value=[])
+
+    execute_sql_statements(
+        query_id=1,
+        rendered_query="UPDATE public_table SET name='x' WHERE id=1",
+        return_results=True,
+        store_results=False,
+        start_time=None,
+        expand_data=False,
+        log_params={},
+    )
 
     # Verify the RLS check was actually reached — if this wasn't called the test
     # would pass vacuously even if the code crashed before the security check.
