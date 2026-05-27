@@ -572,7 +572,7 @@ const Select = forwardRef(
 
     const bulkSelectComponent = useMemo(
       () => (
-        <StyledBulkActionsContainer justify="space-between">
+        <StyledBulkActionsContainer justify="center" gap="small" wrap>
           <Button
             type="link"
             buttonStyle="link"
@@ -584,7 +584,7 @@ const Select = forwardRef(
               handleSelectAll();
             }}
           >
-            {`${t('Select all')} (${formatNumber('SMART_NUMBER', bulkSelectCounts.selectable)})`}
+            {t('Select all')} {`(${formatNumber('SMART_NUMBER', bulkSelectCounts.selectable)})`}
           </Button>
           <Button
             type="link"
@@ -601,7 +601,7 @@ const Select = forwardRef(
               handleDeselectAll();
             }}
           >
-            {`${t('Clear')} (${formatNumber('SMART_NUMBER', bulkSelectCounts.deselectable)})`}
+            {t('Clear')} {`(${formatNumber('SMART_NUMBER', bulkSelectCounts.deselectable)})`}
           </Button>
         </StyledBulkActionsContainer>
       ),
