@@ -24,7 +24,12 @@ assists people when migrating to a new version.
 
 ## Next
 
-### Granular Export Controls
+### Feature Flag Changes
+
+#### `TAGGING_SYSTEM`
+The default value of **TAGGING_SYSTEM** was flipped from `False` to `True`.
+
+#### `GRANULAR_EXPORT_CONTROLS`
 
 A new feature flag `GRANULAR_EXPORT_CONTROLS` introduces three fine-grained permissions that replace the legacy `can_csv` permission:
 
