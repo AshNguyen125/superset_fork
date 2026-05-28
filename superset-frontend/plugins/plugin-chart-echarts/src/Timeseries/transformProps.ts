@@ -1002,6 +1002,11 @@ export default function transformProps(
     }
   }
 
+  const dynamicZoomBottom = Math.max(
+    TIMESERIES_CONSTANTS.zoomBottom,
+    Math.floor(height * 0.08),
+  );
+
   const echartOptions: EChartsCoreOption = {
     useUTC: true,
     grid: {
@@ -1162,7 +1167,7 @@ export default function transformProps(
             type: 'slider',
             start: TIMESERIES_CONSTANTS.dataZoomStart,
             end: TIMESERIES_CONSTANTS.dataZoomEnd,
-            bottom: TIMESERIES_CONSTANTS.zoomBottom,
+            bottom: dynamicZoomBottom,
             yAxisIndex: isHorizontal ? 0 : undefined,
           },
           {
