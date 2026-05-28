@@ -706,8 +706,9 @@ class DatasetRestApi(BaseSupersetModelRestApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        ".detect_datetime_formats",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.detect_datetime_formats"
+        ),
         log_to_statsd=False,
     )
     def detect_datetime_formats(self, pk: int) -> Response:
@@ -788,8 +789,9 @@ class DatasetRestApi(BaseSupersetModelRestApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        f".related_objects",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.related_objects"
+        ),
         log_to_statsd=False,
     )
     def related_objects(self, id_or_uuid: str) -> Response:
@@ -1045,8 +1047,9 @@ class DatasetRestApi(BaseSupersetModelRestApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        f".get_or_create_dataset",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.get_or_create_dataset"
+        ),
         log_to_statsd=False,
     )
     def get_or_create_dataset(self) -> Response:
@@ -1088,7 +1091,14 @@ class DatasetRestApi(BaseSupersetModelRestApi):
             return self.response(400, message=ex.messages)
         table_name = body["table_name"]
         database_id = body["database_id"]
-        if table := DatasetDAO.get_table_by_name(database_id, table_name):
+        # Honour the request's ``schema`` so we don't (a) raise 500 on
+        # ``MultipleResultsFound`` when datasets share a ``table_name`` across
+        # schemas, or (b) silently return an existing dataset from the wrong
+        # schema as a false positive (#30377).
+        schema = body.get("schema")
+        if table := DatasetDAO.get_table_by_schema_and_name(
+            database_id, schema, table_name
+        ):
             return self.response(200, result={"table_id": table.id})
 
         body["database"] = database_id
@@ -1266,9 +1276,9 @@ class DatasetRestApi(BaseSupersetModelRestApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self,
-        *args,
-        **kwargs: f"{self.__class__.__name__}.get_drill_info",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.get_drill_info"
+        ),
         log_to_statsd=False,
     )
     def get_drill_info(self, pk: int, **kwargs: Any) -> Response:
