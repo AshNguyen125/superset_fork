@@ -18,8 +18,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
+import socket
 import warnings
 from datetime import datetime, timedelta
 from inspect import signature
@@ -35,7 +37,7 @@ from typing import (
     TypedDict,
     Union,
 )
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -809,6 +811,7 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
         if code_verifier:
             req_body["code_verifier"] = code_verifier
 
+        cls._validate_oauth2_token_uri(uri)
         response = (
             requests.post(uri, data=req_body, timeout=timeout)
             if config["request_content_type"] == "data"
@@ -816,6 +819,43 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
         )
         response.raise_for_status()
         return response.json()
+
+    @classmethod
+    def _validate_oauth2_token_uri(cls, uri: str) -> None:
+        """Validate OAuth2 token URI to prevent SSRF attacks."""
+        if not app.config.get("DATABASE_OAUTH2_TOKEN_URI_SSRF_VALIDATION", True):
+            return
+
+        parsed = urlparse(uri)
+        if parsed.scheme not in ("https", "http"):
+            raise ValueError(
+                f"OAuth2 token URI must use http or https scheme, got: {parsed.scheme!r}"
+            )
+
+        hostname = parsed.hostname or ""
+
+        allowed_hosts: list[str] = app.config.get(
+            "DATABASE_OAUTH2_TOKEN_URI_ALLOWED_HOSTS", []
+        )
+        if hostname in allowed_hosts:
+            return
+
+        try:
+            addresses = {
+                info[4][0] for info in socket.getaddrinfo(hostname, None)
+            }
+        except socket.gaierror as ex:
+            raise ValueError(
+                f"OAuth2 token URI hostname cannot be resolved: {hostname!r}"
+            ) from ex
+
+        for addr in addresses:
+            ip = ipaddress.ip_address(addr)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise ValueError(
+                    "OAuth2 token URI must not point to a private or reserved "
+                    f"network address (resolved {hostname!r} to {addr})"
+                )
 
     @classmethod
     def get_oauth2_fresh_token(
@@ -834,6 +874,7 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
             "refresh_token": refresh_token,
             "grant_type": "refresh_token",
         }
+        cls._validate_oauth2_token_uri(uri)
         response = (
             requests.post(uri, data=req_body, timeout=timeout)
             if config["request_content_type"] == "data"
