@@ -30,8 +30,8 @@ import { useToasts } from 'src/components/MessageToasts/withToasts';
 import { Descriptions } from 'src/components/Descriptions';
 import { UserWithPermissionsAndRoles } from 'src/types/bootstrapTypes';
 import {
+  ChangePasswordModal,
   UserInfoEditModal,
-  UserInfoResetPasswordModal,
 } from 'src/features/userInfo/UserInfoModal';
 import { Icons, Collapse } from '@superset-ui/core/components';
 import { ApiKeyList } from 'src/features/apiKeys/ApiKeyList';
@@ -163,6 +163,7 @@ export function UserInfo({ user }: { user: UserWithPermissionsAndRoles }) {
   return (
     <StyledLayout>
       <StyledHeader>{t('Your user information')}</StyledHeader>
+      <SubMenu buttons={SubMenuButtons} />
       <DescriptionsContainer>
         <Collapse
           defaultActiveKey={[
@@ -233,7 +234,7 @@ export function UserInfo({ user }: { user: UserWithPermissionsAndRoles }) {
         </Collapse>
       </DescriptionsContainer>
       {modalState.resetPassword && (
-        <UserInfoResetPasswordModal
+        <ChangePasswordModal
           onHide={() => closeModal(ModalType.ResetPassword)}
           show={modalState.resetPassword}
           onSave={() => {
@@ -252,7 +253,6 @@ export function UserInfo({ user }: { user: UserWithPermissionsAndRoles }) {
           user={userDetails}
         />
       )}
-      <SubMenu buttons={SubMenuButtons} />
     </StyledLayout>
   );
 }
