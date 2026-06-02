@@ -40,7 +40,7 @@ from superset.models.core import Database
 from superset.models.slice import Slice
 from superset.utils.core import get_example_default_schema, override_user
 from superset.utils.database import get_example_database
-from tests.integration_tests.base_tests import SupersetTestCase
+from tests.integration_tests.base_tests import SupersetTestCase, user_is_editor
 from tests.integration_tests.fixtures.birth_names_dashboard import (
     load_birth_names_dashboard_with_slices,  # noqa: F401
     load_birth_names_data,  # noqa: F401
@@ -388,8 +388,9 @@ class TestImportDatasetsCommand(SupersetTestCase):
             == '{"certification": {"certified_by": "Data Platform Team", "details": "This table is the source of truth."}, "warning_markdown": "This is a warning."}'  # noqa: E501
         )
 
-        # user should be included as one of the owners
-        assert dataset.owners == [admin]
+        # user should be included as one of the editors
+        assert len(dataset.editors) == 1
+        assert user_is_editor(admin, dataset)
 
         # database is also imported
         assert str(dataset.database.uuid) == "b8a1ccd3-779d-4ab7-8ad8-9ab119d7fe89"
@@ -563,21 +564,19 @@ def _get_table_from_list_by_name(name: str, tables: list[Any]):
 
 
 class TestCreateDatasetCommand(SupersetTestCase):
-    @patch("superset.commands.utils.g")
-    def test_database_not_found(self, mock_g):
-        mock_g.user = security_manager.find_user("admin")
+    def test_database_not_found(self):
         with self.assertRaises(DatasetInvalidError):  # noqa: PT027
-            CreateDatasetCommand({"table_name": "table", "database": 9999}).run()
+            with override_user(security_manager.find_user("admin")):
+                CreateDatasetCommand({"table_name": "table", "database": 9999}).run()
 
-    @patch("superset.commands.utils.g")
     @patch("superset.models.core.Database.get_table")
-    def test_get_table_from_database_error(self, get_table_mock, mock_g):
+    def test_get_table_from_database_error(self, get_table_mock):
         get_table_mock.side_effect = SQLAlchemyError
-        mock_g.user = security_manager.find_user("admin")
         with self.assertRaises(DatasetInvalidError):  # noqa: PT027
-            CreateDatasetCommand(
-                {"table_name": "table", "database": get_example_database().id}
-            ).run()
+            with override_user(security_manager.find_user("admin")):
+                CreateDatasetCommand(
+                    {"table_name": "table", "database": get_example_database().id}
+                ).run()
 
     def test_create_dataset_command(self):
         examples_db = get_example_database()
@@ -600,7 +599,8 @@ class TestCreateDatasetCommand(SupersetTestCase):
                 .one()
             )
             assert table == fetched_table
-            assert [owner.username for owner in table.owners] == ["admin"]
+            assert len(table.editors) == 1
+            assert user_is_editor(security_manager.find_user("admin"), table)
 
         db.session.delete(table)
         with examples_db.get_sqla_engine() as engine:

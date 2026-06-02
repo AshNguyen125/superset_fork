@@ -37,6 +37,15 @@ import { GRID_COLUMN_COUNT } from 'src/dashboard/util/constants';
 // Cast PureSaveModal to `any` to allow instantiation with partial props in tests
 const TestSaveModal = PureSaveModal as any;
 
+jest.mock('src/utils/getBootstrapData', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    common: {
+      user_subjects: [1],
+    },
+  })),
+}));
+
 jest.mock('@superset-ui/core/components/Select', () => ({
   ...jest.requireActual('@superset-ui/core/components/Select/AsyncSelect'),
   AsyncSelect: ({ onChange }: { onChange: (val: any) => void }) => (
@@ -76,7 +85,7 @@ const initialState = {
     slice: {
       slice_id: 1,
       slice_name: 'title',
-      owners: [1],
+      editors: [{ id: 1 }],
     },
     alert: null,
   },
@@ -281,12 +290,18 @@ test('disables overwrite option for new slice', () => {
   expect(getByRole('radio', { name: 'Save (Overwrite)' })).toBeDisabled();
 });
 
-test('disables overwrite option for non-owner', () => {
+test('disables overwrite option for non-editor', () => {
   const { getByRole, getByText } = setup(
     {},
     mockStore({
       ...initialState,
-      user: { userId: 2 },
+      explore: {
+        ...initialState.explore,
+        slice: {
+          ...initialState.explore.slice,
+          editors: [{ id: 999 }],
+        },
+      },
     }),
   );
   expect(getByRole('radio', { name: 'Save (Overwrite)' })).toBeDisabled();
@@ -387,7 +402,11 @@ test('renders InfoTooltip icon next to Dataset Name label when datasource type i
 test('make sure slice_id in the URLSearchParams before the redirect', () => {
   const myProps = {
     ...defaultProps,
-    slice: { slice_id: 1, slice_name: 'title', owners: [1] },
+    slice: {
+      slice_id: 1,
+      slice_name: 'title',
+      editors: [{ id: 1 }],
+    },
     actions: {
       setFormData: jest.fn(),
       updateSlice: jest.fn(() => Promise.resolve({ id: 1 })),
@@ -411,7 +430,11 @@ test('make sure slice_id in the URLSearchParams before the redirect', () => {
 test('removes form_data_key from URL parameters after save', () => {
   const myProps = {
     ...defaultProps,
-    slice: { slice_id: 1, slice_name: 'title', owners: [1] },
+    slice: {
+      slice_id: 1,
+      slice_name: 'title',
+      editors: [{ id: 1 }],
+    },
     actions: {
       setFormData: jest.fn(),
       updateSlice: jest.fn(() => Promise.resolve({ id: 1 })),
@@ -467,7 +490,11 @@ test('dispatches removeChartState when saving and going to dashboard', async () 
 
   const myProps = {
     ...defaultProps,
-    slice: { slice_id: 1, slice_name: 'title', owners: [1] },
+    slice: {
+      slice_id: 1,
+      slice_name: 'title',
+      editors: [{ id: 1 }],
+    },
     actions: {
       setFormData: mockSetFormData,
       updateSlice: mockUpdateSlice,

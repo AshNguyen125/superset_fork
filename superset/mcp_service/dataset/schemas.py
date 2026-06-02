@@ -47,6 +47,8 @@ from superset.mcp_service.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from superset.mcp_service.privacy import filter_user_directory_fields
 from superset.mcp_service.system.schemas import (
     PaginationInfo,
+    serialize_subject_object,
+    SubjectInfo,
     TagInfo,
 )
 from superset.mcp_service.utils import (
@@ -69,6 +71,7 @@ class DatasetFilter(ColumnOperator):
         "table_name",
         "schema",
         "database_name",
+        "editor",
         "created_by_fk",
         "changed_by_fk",
     ] = Field(
@@ -133,6 +136,9 @@ class DatasetInfo(BaseModel):
         None, description="Humanized creation time"
     )
     tags: List[TagInfo] = Field(default_factory=list, description="Dataset tags")
+    editors: List[SubjectInfo] = Field(
+        default_factory=list, description="Dataset editors"
+    )
     is_virtual: bool | None = Field(
         None, description="Whether the dataset is virtual (uses SQL)"
     )
@@ -696,6 +702,13 @@ def serialize_dataset_object(dataset: Any) -> DatasetInfo | None:
                 for tag in getattr(dataset, "tags", [])
             ]
             if getattr(dataset, "tags", None)
+            else [],
+            editors=[
+                info
+                for editor in getattr(dataset, "editors", [])
+                if (info := serialize_subject_object(editor)) is not None
+            ]
+            if getattr(dataset, "editors", None)
             else [],
             is_virtual=getattr(dataset, "is_virtual", None),
             database_id=getattr(dataset, "database_id", None),

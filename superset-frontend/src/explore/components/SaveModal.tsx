@@ -58,6 +58,7 @@ import {
   updateChartState,
 } from 'src/dashboard/actions/dashboardState';
 import { Dashboard } from 'src/types/Dashboard';
+import getBootstrapData from 'src/utils/getBootstrapData';
 import { TabNode, TabTreeNode } from '../types';
 import { CHART_WIDTH, CHART_HEIGHT } from 'src/dashboard/constants';
 
@@ -124,9 +125,11 @@ class SaveModal extends Component<SaveModalProps, SaveModalState> {
   }
 
   canOverwriteSlice(): boolean {
+    const userSubjects = getBootstrapData()?.common?.user_subjects ?? [];
     return (
-      this.props.slice?.owners?.includes(this.props.user.userId) &&
-      !this.props.slice?.is_managed_externally
+      this.props.slice?.editors?.some((editor: { id: number } | number) =>
+        userSubjects.includes(typeof editor === 'number' ? editor : editor.id),
+      ) && !this.props.slice?.is_managed_externally
     );
   }
 
@@ -467,20 +470,21 @@ class SaveModal extends Component<SaveModalProps, SaveModalState> {
   };
 
   loadDashboards = async (search: string, page: number, pageSize: number) => {
+    const filters: Array<{ col: string; opr: string; value: unknown }> = [
+      {
+        col: 'dashboard_title',
+        opr: 'ct',
+        value: search,
+      },
+      {
+        col: 'id',
+        opr: 'dashboard_is_editable',
+        value: true,
+      },
+    ];
     const queryParams = rison.encode({
       columns: ['id', 'dashboard_title'],
-      filters: [
-        {
-          col: 'dashboard_title',
-          opr: 'ct',
-          value: search,
-        },
-        {
-          col: 'owners',
-          opr: 'rel_m_m',
-          value: this.props.user.userId,
-        },
-      ],
+      filters,
       page,
       page_size: pageSize,
       order_column: 'dashboard_title',

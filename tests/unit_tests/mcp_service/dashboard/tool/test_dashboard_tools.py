@@ -84,7 +84,7 @@ async def test_list_dashboards_basic(mock_list, mcp_server):
     dashboard.created_on = None
     dashboard.created_on_humanized = None
     dashboard.tags = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = None
     dashboard.css = None
@@ -110,7 +110,7 @@ async def test_list_dashboards_basic(mock_list, mcp_server):
         "created_on": dashboard.created_on,
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
-        "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_list.return_value = ([dashboard], 1)
@@ -150,7 +150,7 @@ async def test_list_dashboards_with_filters(mock_list, mcp_server):
     dashboard.created_on = None
     dashboard.created_on_humanized = None
     dashboard.tags = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = None
     dashboard.css = None
@@ -176,7 +176,7 @@ async def test_list_dashboards_with_filters(mock_list, mcp_server):
         "created_on": dashboard.created_on,
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
-        "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_list.return_value = ([dashboard], 1)
@@ -245,7 +245,7 @@ async def test_list_dashboards_with_search(mock_list, mcp_server):
     dashboard.created_on = None
     dashboard.created_on_humanized = None
     dashboard.tags = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = None
     dashboard.css = None
@@ -271,7 +271,7 @@ async def test_list_dashboards_with_search(mock_list, mcp_server):
         "created_on": dashboard.created_on,
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
-        "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_list.return_value = ([dashboard], 1)
@@ -348,7 +348,7 @@ async def test_get_dashboard_info_success(
     dashboard.created_on_humanized = None
     dashboard.changed_on_humanized = None
     dashboard.slices = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
     dashboard.charts = []
@@ -365,7 +365,7 @@ async def test_get_dashboard_info_success(
         "created_on": dashboard.created_on,
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
-        "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_info.return_value = dashboard  # Only the dashboard object
@@ -427,6 +427,7 @@ async def test_get_dashboard_info_permalink_does_not_double_sanitize(
     dashboard.changed_on_humanized = None
     dashboard.slices = []
     dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
     dashboard.charts = []
@@ -669,6 +670,7 @@ async def test_get_dashboard_info_does_not_expose_access_list_or_roles(
     chart.uuid = None
     chart.tags = []
     chart.owners = [owner]
+    chart.editors = []
 
     dashboard = Mock()
     dashboard.id = 1
@@ -693,6 +695,7 @@ async def test_get_dashboard_info_does_not_expose_access_list_or_roles(
     dashboard.changed_on_humanized = None
     dashboard.slices = [chart]
     dashboard.owners = [owner]
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = [dashboard_role]
 
@@ -764,6 +767,7 @@ async def test_get_dashboard_info_restricted_user_redacts_data_model_metadata(
     dashboard.changed_on_humanized = None
     dashboard.slices = [chart]
     dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
 
@@ -816,6 +820,7 @@ async def test_get_dashboard_info_restricted_user_redacts_permalink_filter_state
     dashboard.changed_on_humanized = None
     dashboard.slices = []
     dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
 
@@ -897,6 +902,7 @@ async def test_list_dashboards_omits_requested_user_directory_fields(
     dashboard.created_on_humanized = None
     dashboard.tags = []
     dashboard.owners = [Mock()]
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = None
     dashboard.css = None
@@ -969,7 +975,7 @@ async def test_get_dashboard_info_by_uuid(mock_find_object, mcp_server):
     dashboard.created_on_humanized = "2 days ago"
     dashboard.changed_on_humanized = "1 day ago"
     dashboard.slices = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
 
@@ -1008,7 +1014,7 @@ async def test_get_dashboard_info_by_slug(mock_find_object, mcp_server):
     dashboard.created_on_humanized = "2 days ago"
     dashboard.changed_on_humanized = "1 day ago"
     dashboard.slices = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.tags = []
     dashboard.roles = []
 
@@ -1039,7 +1045,7 @@ async def test_list_dashboards_custom_uuid_slug_columns(mock_list, mcp_server):
     dashboard.created_on = None
     dashboard.created_on_humanized = None
     dashboard.tags = []
-    dashboard.owners = []
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = None
     dashboard.css = None
@@ -1065,7 +1071,7 @@ async def test_list_dashboards_custom_uuid_slug_columns(mock_list, mcp_server):
         "created_on": dashboard.created_on,
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
-        "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_list.return_value = ([dashboard], 1)
@@ -1110,6 +1116,7 @@ async def test_list_dashboards_sanitizes_dashboard_descriptions_and_filter_text(
     dashboard.created_on_humanized = None
     dashboard.tags = []
     dashboard.owners = []
+    dashboard.editors = []
     dashboard.slices = []
     dashboard.description = "Summarize revenue trends"
     dashboard.css = None
@@ -1149,6 +1156,7 @@ async def test_list_dashboards_sanitizes_dashboard_descriptions_and_filter_text(
         "created_on_humanized": dashboard.created_on_humanized,
         "tags": dashboard.tags,
         "owners": dashboard.owners,
+        "editors": dashboard.editors,
         "charts": [],
     }
     mock_list.return_value = ([dashboard], 1)
@@ -1260,7 +1268,7 @@ class TestDashboardDefaultColumnFiltering:
         dashboard.created_on = None
         dashboard.created_on_humanized = None
         dashboard.tags = []
-        dashboard.owners = []
+        dashboard.editors = []
         dashboard.slices = []
         dashboard.description = None
         dashboard.css = None

@@ -54,6 +54,8 @@ from superset.mcp_service.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from superset.mcp_service.privacy import filter_user_directory_fields
 from superset.mcp_service.system.schemas import (
     PaginationInfo,
+    serialize_subject_object,
+    SubjectInfo,
     TagInfo,
 )
 from superset.mcp_service.utils import (
@@ -94,7 +96,7 @@ class ChartLike(Protocol):
     created_on_humanized: str | None
     uuid: str | None
     tags: List[Any] | None
-    owners: List[Any] | None
+    editors: List[Any] | None
 
 
 class ChartInfo(BaseModel):
@@ -126,6 +128,9 @@ class ChartInfo(BaseModel):
     )
     uuid: str | None = Field(None, description="Chart UUID")
     tags: List[TagInfo] = Field(default_factory=list, description="Chart tags")
+    editors: List[SubjectInfo] = Field(
+        default_factory=list, description="Chart editors"
+    )
 
     # Filters extracted from form_data for easy inspection
     filters: ChartFiltersInfo | None = Field(
@@ -543,6 +548,13 @@ def serialize_chart_object(chart: ChartLike | None) -> ChartInfo | None:
                 for tag in getattr(chart, "tags", [])
             ]
             if getattr(chart, "tags", None)
+            else [],
+            editors=[
+                info
+                for editor in getattr(chart, "editors", [])
+                if (info := serialize_subject_object(editor)) is not None
+            ]
+            if getattr(chart, "editors", None)
             else [],
         )
     )
