@@ -61,6 +61,7 @@ import {
 } from 'src/features/reports/ReportModal/actions';
 import { PageHeaderWithActions } from '@superset-ui/core/components/PageHeaderWithActions';
 import { useUnsavedChangesPrompt } from 'src/hooks/useUnsavedChangesPrompt';
+import { useOptionalVersionHistory } from 'src/features/versionHistory';
 import DashboardEmbedModal from '../EmbeddedModal';
 import OverwriteConfirm from '../OverwriteConfirm';
 import {
@@ -220,7 +221,7 @@ const discardChanges = () => {
   window.location.assign(url);
 };
 
-const Header = (): JSX.Element => {
+const HeaderInner = (): JSX.Element => {
   const dispatch = useDispatch();
   const [didNotifyMaxUndoHistoryToast, setDidNotifyMaxUndoHistoryToast] =
     useState(false);
@@ -284,6 +285,13 @@ const Header = (): JSX.Element => {
       const end = chart.chartUpdateEndTime ?? 0;
       return start > end;
     }),
+  );
+  // Block edit-mode entry and the save / title-change paths while the user
+  // is previewing a historical version — otherwise saving partially
+  // overwrites the live dashboard with snapshot values (layout, title,
+  // CSS are read from current Redux which is the snapshot during preview).
+  const isPreviewingVersion = useSelector(
+    (state: HeaderRootState) => !!state.dashboardState?.versionPreview,
   );
   const ctrlYTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ctrlZTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -390,12 +398,18 @@ const Header = (): JSX.Element => {
 
   const handleChangeText = useCallback(
     (nextText: string) => {
+      if (isPreviewingVersion) {
+        boundActionCreators.addDangerToast(
+          t('Exit preview before editing the dashboard'),
+        );
+        return;
+      }
       if (nextText && dashboardTitle !== nextText) {
         boundActionCreators.updateDashboardTitle(nextText);
         boundActionCreators.onChange();
       }
     },
-    [boundActionCreators, dashboardTitle],
+    [boundActionCreators, dashboardTitle, isPreviewingVersion],
   );
 
   const handleCtrlY = useCallback(() => {
@@ -428,6 +442,15 @@ const Header = (): JSX.Element => {
   }, [boundActionCreators, editMode]);
 
   const overwriteDashboard = useCallback(() => {
+    if (isPreviewingVersion) {
+      // Defensive guard: the Edit and Save buttons are disabled while
+      // previewing, but a future call site or keyboard shortcut should
+      // not be able to bypass that.
+      boundActionCreators.addDangerToast(
+        t('Exit preview before saving the dashboard'),
+      );
+      return;
+    }
     const currentColorNamespace =
       dashboardInfo?.metadata?.color_namespace || colorNamespace;
     const currentColorScheme =
@@ -492,6 +515,7 @@ const Header = (): JSX.Element => {
     dashboardInfo.roles,
     dashboardInfo.tags,
     dashboardTitle,
+    isPreviewingVersion,
     layout,
     refreshFrequency,
     shouldPersistRefreshFrequency,
@@ -585,10 +609,18 @@ const Header = (): JSX.Element => {
   );
 
   const handleEnterEditMode = useCallback(() => {
+    if (isPreviewingVersion) {
+      // Belt-and-suspenders: the button is disabled, but a stray caller
+      // should not be able to enter edit mode against a snapshot view.
+      boundActionCreators.addDangerToast(
+        t('Exit preview before editing the dashboard'),
+      );
+      return;
+    }
     toggleEditMode();
     boundActionCreators.clearDashboardHistory?.();
     boundActionCreators.setUnsavedChanges(false);
-  }, [toggleEditMode, boundActionCreators]);
+  }, [boundActionCreators, isPreviewingVersion, toggleEditMode]);
 
   const NavExtension = extensionsRegistry.get('dashboard.nav.right');
 
@@ -750,16 +782,30 @@ const Header = (): JSX.Element => {
           <div css={actionButtonsStyle}>
             {NavExtension && <NavExtension />}
             {userCanEdit && (
-              <Button
-                buttonStyle="secondary"
-                onClick={handleEnterEditMode}
-                data-test="edit-dashboard-button"
-                className="action-button"
-                css={editButtonStyle}
-                aria-label={t('Edit dashboard')}
+              <Tooltip
+                title={
+                  isPreviewingVersion
+                    ? t('Exit preview to edit the dashboard')
+                    : null
+                }
               >
-                {t('Edit dashboard')}
-              </Button>
+                {/* Wrap in a div so the disabled-button tooltip still
+                    triggers — antd tooltips don't fire on disabled
+                    buttons directly. */}
+                <div>
+                  <Button
+                    buttonStyle="secondary"
+                    onClick={handleEnterEditMode}
+                    disabled={isPreviewingVersion}
+                    data-test="edit-dashboard-button"
+                    className="action-button"
+                    css={editButtonStyle}
+                    aria-label={t('Edit dashboard')}
+                  >
+                    {t('Edit dashboard')}
+                  </Button>
+                </div>
+              </Tooltip>
             )}
           </div>
         )}
@@ -776,6 +822,7 @@ const Header = (): JSX.Element => {
       handleCtrlZ,
       handleEnterEditMode,
       hasUnsavedChanges,
+      isPreviewingVersion,
       overwriteDashboard,
       redoLength,
       undoLength,
@@ -789,7 +836,13 @@ const Header = (): JSX.Element => {
     setCurrentReportDeleting(null);
   };
 
+  // Only surface the menu item when the provider has actually mounted —
+  // otherwise the no-op stub renders an inert click target. Symmetric
+  // with how the chart Explore menu gates on context presence.
+  const versionHistoryCtx = useOptionalVersionHistory();
+  const openVersionHistoryPanel = versionHistoryCtx?.openPanel;
   const [menu, isDropdownVisible, setIsDropdownVisible] = useHeaderActionsMenu({
+    onOpenVersionHistory: openVersionHistoryPanel,
     addSuccessToast: boundActionCreators.addSuccessToast,
     addDangerToast: boundActionCreators.addDangerToast,
     dashboardInfo,
@@ -920,5 +973,12 @@ const Header = (): JSX.Element => {
     </div>
   );
 };
+
+// The version-history provider was previously mounted here (wrapping
+// just ``HeaderInner``), which left the dashboard's preview banner in
+// a sibling subtree with no access to the context. It is now mounted
+// in ``DashboardBuilder`` so it covers both the header and the
+// dashboard container; ``Header`` no longer needs to wrap anything.
+const Header = (): JSX.Element => <HeaderInner />;
 
 export default Header;

@@ -45,6 +45,10 @@ import ReportModal from 'src/features/reports/ReportModal';
 import { deleteActiveReport } from 'src/features/reports/ReportModal/actions';
 import { useUnsavedChangesPrompt } from 'src/hooks/useUnsavedChangesPrompt';
 import { getChartFormDiffs } from 'src/utils/getChartFormDiffs';
+import {
+  useChartPreviewSlice,
+  useOptionalVersionHistory,
+} from 'src/features/versionHistory';
 import { StreamingExportModal } from 'src/components/StreamingExportModal';
 import { Tag } from 'src/components/Tag';
 import { ChartState, ExplorePageInitialData } from 'src/explore/types';
@@ -197,20 +201,41 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
     [redirectSQLLab, history],
   );
 
-  const [menu, isDropdownVisible, setIsDropdownVisible, streamingExportState] =
-    useExploreAdditionalActionsMenu(
-      latestQueryFormData,
-      canDownload,
-      slice,
-      redirectToSQLLab,
-      openPropertiesModal,
-      ownState,
-      metadata?.dashboards,
-      showReportModal,
-      setCurrentReportDeleting,
-    );
+  // When the VersionHistoryProvider hasn't mounted (feature flag off, or
+  // the chart has no uuid yet) we deliberately don't surface the menu item
+  // — a stub openPanel would render an inert click target.
+  const versionHistoryCtx = useOptionalVersionHistory();
+  const openVersionHistoryPanel = versionHistoryCtx?.openPanel;
+  const isPreviewing = !!versionHistoryCtx?.previewVersionUuid;
+  // While previewing a historical version, the Explore header reads from
+  // ``slice``/``sliceName`` props which still hold the live values. The
+  // snapshot's slice-level scalars (title, description, certification) come
+  // through this context so we can render them without mutating Redux.
+  const previewSliceOverrides = useChartPreviewSlice();
+  const effectiveSliceName =
+    isPreviewing && previewSliceOverrides?.slice_name != null
+      ? previewSliceOverrides.slice_name
+      : sliceName;
+  const effectiveSlice = useMemo(() => {
+    if (!isPreviewing || !previewSliceOverrides || !slice) return slice;
+    return {
+      ...slice,
+      ...(previewSliceOverrides.slice_name != null && {
+        slice_name: previewSliceOverrides.slice_name,
+      }),
+      ...(previewSliceOverrides.description !== undefined && {
+        description: previewSliceOverrides.description,
+      }),
+      ...(previewSliceOverrides.certified_by !== undefined && {
+        certified_by: previewSliceOverrides.certified_by,
+      }),
+      ...(previewSliceOverrides.certification_details !== undefined && {
+        certification_details: previewSliceOverrides.certification_details,
+      }),
+    } as Slice;
+  }, [isPreviewing, previewSliceOverrides, slice]);
 
-  const metadataBar = useExploreMetadataBar(metadata, slice ?? null);
+  const metadataBar = useExploreMetadataBar(metadata, effectiveSlice ?? null);
   const oldSliceName = slice?.slice_name;
 
   // Capture initial form data for new charts
@@ -236,10 +261,32 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
     [formData, sliceName],
   );
 
+  // Skip the diff calc while previewing — ``currentFormData`` carries the
+  // snapshot's values via context, which would otherwise mark the chart
+  // as "altered" against the live original and surface a stale-edit
+  // warning the user can't act on.
   const formDiffs = useMemo(
-    () => getChartFormDiffs(originalFormData, currentFormData),
-    [originalFormData, currentFormData],
+    () =>
+      isPreviewing ? {} : getChartFormDiffs(originalFormData, currentFormData),
+    [isPreviewing, originalFormData, currentFormData],
   );
+
+  const hasUnsavedChanges = !isPreviewing && Object.keys(formDiffs).length > 0;
+
+  const [menu, isDropdownVisible, setIsDropdownVisible, streamingExportState] =
+    useExploreAdditionalActionsMenu(
+      latestQueryFormData,
+      canDownload,
+      slice,
+      redirectToSQLLab,
+      openPropertiesModal,
+      ownState,
+      metadata?.dashboards,
+      showReportModal,
+      setCurrentReportDeleting,
+      openVersionHistoryPanel,
+      hasUnsavedChanges,
+    );
 
   const {
     showModal: showUnsavedChangesModal,
@@ -248,7 +295,7 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
     handleSaveAndCloseModal,
     triggerManualSave,
   } = useUnsavedChangesPrompt({
-    hasUnsavedChanges: Object.keys(formDiffs).length > 0,
+    hasUnsavedChanges,
     onSave: () => {
       dispatch(setSaveChartModalVisibility(true));
     },
@@ -272,25 +319,33 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
 
   const editableTitleProps = useMemo(
     () => ({
-      title: sliceName ?? '',
+      title: effectiveSliceName ?? '',
       canEdit:
         !slice ||
-        canOverwrite ||
-        (user?.userId !== undefined &&
-          (slice?.owners || []).includes(user.userId)),
+        (!isPreviewing &&
+          (canOverwrite ||
+            (user?.userId !== undefined &&
+              (slice?.owners || []).includes(user.userId)))),
       onSave: actions.updateChartTitle,
       placeholder: t('Add the name of the chart'),
       label: t('Chart title'),
     }),
-    [actions.updateChartTitle, canOverwrite, slice, sliceName, user?.userId],
+    [
+      actions.updateChartTitle,
+      canOverwrite,
+      effectiveSliceName,
+      isPreviewing,
+      slice,
+      user?.userId,
+    ],
   );
 
   const certificatiedBadgeProps = useMemo(
     () => ({
-      certifiedBy: slice?.certified_by,
-      details: slice?.certification_details,
+      certifiedBy: effectiveSlice?.certified_by,
+      details: effectiveSlice?.certification_details,
     }),
-    [slice?.certified_by, slice?.certification_details],
+    [effectiveSlice?.certified_by, effectiveSlice?.certification_details],
   );
 
   const faveStarProps = useMemo(
@@ -331,11 +386,17 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
     ],
   );
 
+  const effectiveSaveDisabled = saveDisabled || isPreviewing;
   const rightPanelAdditionalItems = useMemo(
     () => (
       <Tooltip
         title={
-          saveDisabled ? t('Add required control values to save chart') : null
+          // eslint-disable-next-line no-nested-ternary
+          isPreviewing
+            ? t('Exit version preview to save')
+            : saveDisabled
+              ? t('Add required control values to save chart')
+              : null
         }
       >
         {/* needed to wrap button in a div - antd tooltip doesn't work with disabled button */}
@@ -343,7 +404,7 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
           <Button
             buttonStyle="secondary"
             onClick={showModal}
-            disabled={saveDisabled}
+            disabled={effectiveSaveDisabled}
             data-test="query-save-button"
             css={saveButtonStyles}
             icon={<Icons.SaveOutlined />}
@@ -353,7 +414,7 @@ const ExploreChartHeader: FC<ExploreChartHeaderProps> = ({
         </div>
       </Tooltip>
     ),
-    [saveDisabled, showModal],
+    [effectiveSaveDisabled, isPreviewing, saveDisabled, showModal],
   );
 
   const menuDropdownProps = useMemo(

@@ -191,6 +191,12 @@ export default function chartReducer(
   if (action.type === actions.REMOVE_CHART) {
     return omit(charts, [action.key]);
   }
+  if (action.type === actions.REPLACE_CHART_STATE) {
+    // Used by the version-history preview flow to restore the captured
+    // pre-preview chart state on exit, discarding any query results that
+    // landed under this key while previewing a snapshot.
+    return { ...charts, [action.key]: action.state };
+  }
   if (action.type === actions.UPDATE_CHART_ID) {
     const { newId, key } = action;
     charts[newId] = {
@@ -223,6 +229,14 @@ export default function chartReducer(
   }
 
   if (action.type in actionHandlers) {
+    // ADD_CHART seeds a new entry; every other handler reads fields off the
+    // existing ChartState. If the key is missing (e.g. a CHART_UPDATE_*
+    // dispatched after the chart was removed, or before HYDRATE_DASHBOARD
+    // populated it on a forked dashboard), passing `undefined` to the
+    // handler crashes when it dereferences state.X. Drop the action instead.
+    if (action.type !== actions.ADD_CHART && !charts[action.key]) {
+      return charts;
+    }
     return {
       ...charts,
       [action.key]: actionHandlers[action.type](charts[action.key]),

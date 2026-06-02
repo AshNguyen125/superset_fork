@@ -22,6 +22,7 @@ import {
   NEW_COMPONENTS_SOURCE_ID,
   DASHBOARD_HEADER_ID,
 } from '../util/constants';
+import { logging } from '@apache-superset/core/utils';
 import componentIsResizable from '../util/componentIsResizable';
 import findParentId from '../util/findParentId';
 import getComponentWidthFromDrop from '../util/getComponentWidthFromDrop';
@@ -44,6 +45,10 @@ import {
 } from '../actions/dashboardLayout';
 
 import { HYDRATE_DASHBOARD } from '../actions/hydrate';
+import {
+  ENTER_VERSION_PREVIEW,
+  EXIT_VERSION_PREVIEW,
+} from '../actions/dashboardState';
 import { DashboardLayout } from '../types';
 import { DropResult } from '../components/dnd/dragDroppableConfig';
 
@@ -110,6 +115,34 @@ const actionHandlers: Record<
     return {
       ...action.data!.dashboardLayout.present,
     };
+  },
+
+  [ENTER_VERSION_PREVIEW](
+    state: DashboardLayout,
+    action: DashboardLayoutAction,
+  ): DashboardLayout {
+    const next = (action as unknown as { newLayout?: DashboardLayout })
+      .newLayout;
+    return next ?? state;
+  },
+
+  [EXIT_VERSION_PREVIEW](
+    state: DashboardLayout,
+    action: DashboardLayoutAction,
+  ): DashboardLayout {
+    const restore = (action as unknown as { restoreLayout?: DashboardLayout })
+      .restoreLayout;
+    if (!restore) {
+      // No captured layout means the EXIT was dispatched without a
+      // matching ENTER. Returning ``state`` would leave the snapshot
+      // layout in place while ``versionPreview`` is null — log instead
+      // of silently keeping the wrong state.
+      logging.warn(
+        'layoutReducer: EXIT_VERSION_PREVIEW received without restoreLayout; ignoring.',
+      );
+      return state;
+    }
+    return restore;
   },
 
   [UPDATE_COMPONENTS](

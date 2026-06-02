@@ -1,0 +1,82 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+import { t } from '@apache-superset/core/translation';
+import { Modal } from '@superset-ui/core/components';
+import { EntityType } from '../types';
+
+interface Props {
+  open: boolean;
+  entityType: EntityType;
+  summary: string;
+  date: string;
+  restoring: boolean;
+  // When true, the modal warns that unsaved live edits will be lost.
+  // Restore is then a destructive action and the user should know.
+  hasUnsavedChanges?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+const RestoreConfirmModal = ({
+  open,
+  entityType,
+  summary,
+  date,
+  restoring,
+  hasUnsavedChanges,
+  onConfirm,
+  onCancel,
+}: Props) => {
+  const intro =
+    entityType === 'dashboard'
+      ? t('Restoring will revert your dashboard to: ')
+      : t('Restoring will revert your chart to: ');
+  const tail = t(
+    ' (%(date)s). Your current version will be saved in version history and you can restore it again at any time.',
+    { date },
+  );
+
+  return (
+    <Modal
+      show={open}
+      onHide={onCancel}
+      title={t('Restore this version?')}
+      onHandledPrimaryAction={onConfirm}
+      primaryButtonName={t('Restore this version')}
+      primaryButtonLoading={restoring}
+      width={480}
+      destroyOnHidden
+    >
+      <p>
+        {intro}
+        <strong>{summary}</strong>
+        {tail}
+      </p>
+      {hasUnsavedChanges && (
+        <p data-test="restore-confirm-unsaved-warning">
+          <strong>
+            {t('You have unsaved changes that will be discarded by restoring.')}
+          </strong>
+        </p>
+      )}
+    </Modal>
+  );
+};
+
+export default RestoreConfirmModal;

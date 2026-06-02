@@ -17,6 +17,7 @@
  * under the License.
  */
 import { t } from '@apache-superset/core/translation';
+import { logging } from '@apache-superset/core/utils';
 
 import {
   FETCH_ALL_SLICES_FAILED,
@@ -27,6 +28,10 @@ import {
   SliceEntitiesActionPayload,
 } from '../actions/sliceEntities';
 import { HYDRATE_DASHBOARD } from '../actions/hydrate';
+import {
+  ENTER_VERSION_PREVIEW,
+  EXIT_VERSION_PREVIEW,
+} from '../actions/dashboardState';
 
 export const initSliceEntities: SliceEntitiesState = {
   slices: {},
@@ -35,11 +40,35 @@ export const initSliceEntities: SliceEntitiesState = {
   lastUpdated: 0,
 };
 
+type VersionPreviewSwapAction = {
+  type: typeof ENTER_VERSION_PREVIEW | typeof EXIT_VERSION_PREVIEW;
+  newSliceEntities?: SliceEntitiesState;
+  restoreSliceEntities?: SliceEntitiesState;
+};
+
 export default function sliceEntitiesReducer(
   state: SliceEntitiesState = initSliceEntities,
-  action: SliceEntitiesActionPayload,
+  action: SliceEntitiesActionPayload | VersionPreviewSwapAction,
 ): SliceEntitiesState {
   switch (action.type) {
+    case ENTER_VERSION_PREVIEW: {
+      const next = (action as VersionPreviewSwapAction).newSliceEntities;
+      return next ?? state;
+    }
+    case EXIT_VERSION_PREVIEW: {
+      const restore = (action as VersionPreviewSwapAction).restoreSliceEntities;
+      if (!restore) {
+        // No captured originals means the EXIT was dispatched without a
+        // matching ENTER. Returning ``state`` leaves the snapshot data
+        // visible while the rest of the app thinks preview is over —
+        // surface the bug instead of silently degrading.
+        logging.warn(
+          'sliceEntitiesReducer: EXIT_VERSION_PREVIEW received without restoreSliceEntities; ignoring.',
+        );
+        return state;
+      }
+      return restore as SliceEntitiesState;
+    }
     case HYDRATE_DASHBOARD:
       return {
         ...action.data.sliceEntities,

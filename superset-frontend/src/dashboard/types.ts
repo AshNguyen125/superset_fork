@@ -166,9 +166,16 @@ export type DashboardState = {
   isStarred?: boolean;
   lastRefreshTime?: number;
   tabActivationTimes?: Record<string, number>;
+  versionPreview?: {
+    versionUuid: string;
+    capturedSliceEntities: unknown;
+    capturedLayout: unknown;
+    capturedDashboardInfo?: Record<string, unknown> | null;
+  } | null;
 };
 export type DashboardInfo = {
   id: number;
+  uuid?: string;
   common: {
     conf: JsonObject;
   };
@@ -393,4 +400,5 @@ export enum MenuKeys {
   ManageEmailReports = 'manage_email_reports',
   ExportPivotXlsx = 'export_pivot_xlsx',
   EmbedCode = 'embed_code',
+  ViewVersionHistory = 'view_version_history',
 }

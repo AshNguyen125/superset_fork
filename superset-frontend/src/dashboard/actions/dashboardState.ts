@@ -40,9 +40,14 @@ import { t } from '@apache-superset/core/translation';
 import { chart as initChart } from 'src/components/Chart/chartReducer';
 import { applyDefaultFormData } from 'src/explore/store';
 import {
+  DASHBOARD_HEADER_ID,
   SAVE_TYPE_OVERWRITE,
   SAVE_TYPE_OVERWRITE_CONFIRMED,
 } from 'src/dashboard/util/constants';
+import { DASHBOARD_HEADER_TYPE } from 'src/dashboard/util/componentTypes';
+import getChartIdsFromLayout from 'src/dashboard/util/getChartIdsFromLayout';
+import type { DashboardLayout } from 'src/dashboard/types';
+import { fetchSlicesByIds } from './sliceEntities';
 import {
   getCrossFiltersConfiguration,
   isCrossFiltersEnabled,
@@ -254,15 +259,31 @@ export function toggleExpandSlice(sliceId: number): ToggleExpandSliceAction {
   return { type: TOGGLE_EXPAND_SLICE, sliceId };
 }
 
-export const SET_EDIT_MODE = 'SET_EDIT_MODE';
+export const SET_EDIT_MODE = 'SET_EDIT_MODE' as const;
 
 interface SetEditModeAction {
   type: typeof SET_EDIT_MODE;
   editMode: boolean;
 }
 
-export function setEditMode(editMode: boolean): SetEditModeAction {
-  return { type: SET_EDIT_MODE, editMode };
+export function setEditMode(editMode: boolean) {
+  // Thunk so we can read ``versionPreview`` and refuse to enter edit
+  // mode while a historical snapshot is shown. The Header gates the
+  // primary entry point with a disabled button + tooltip; this is the
+  // defense-in-depth for the other call sites (empty-state CTAs in
+  // DashboardGrid / DashboardBuilder / Tab) that dispatch this action
+  // directly. Returns the dispatched action when applied, ``null``
+  // when blocked, mirroring callers that don't read the return value.
+  return (
+    dispatch: AppDispatch,
+    getState: GetState,
+  ): SetEditModeAction | null => {
+    if (editMode && getState().dashboardState?.versionPreview) {
+      dispatch(addDangerToast(t('Exit preview to edit the dashboard')));
+      return null;
+    }
+    return dispatch({ type: SET_EDIT_MODE, editMode });
+  };
 }
 
 export const ON_CHANGE = 'ON_CHANGE';
@@ -1530,4 +1551,262 @@ export const updateDashboardLabelsColor =
     } catch (e) {
       logging.error('Failed to update colors for new charts and labels:', e);
     }
+  };
+
+// ---------------------------------------------------------------------------
+// Version-history preview
+// ---------------------------------------------------------------------------
+//
+// Captured-original pattern: when entering preview mode for a historical
+// version, we stash the live ``sliceEntities`` + ``dashboardLayout`` snapshot
+// inside dashboardState. The same action swaps the displayed values in those
+// two reducers. Exiting reads the captured originals back out and dispatches
+// them as the new values. No backend re-fetch, no save-state mutation, no
+// editMode toggle.
+export const ENTER_VERSION_PREVIEW = 'ENTER_VERSION_PREVIEW';
+export const EXIT_VERSION_PREVIEW = 'EXIT_VERSION_PREVIEW';
+
+interface VersionSnapshotPayload {
+  slices?: Record<string, unknown>[] | Record<string, Slice>;
+  position_json?: string | Record<string, unknown> | null;
+  dashboard_title?: string | null;
+  description?: string | null;
+  slug?: string | null;
+  css?: string | null;
+  json_metadata?: string | null;
+  published?: boolean | null;
+  [key: string]: unknown;
+}
+
+// Scalar fields read from ``dashboardInfo`` by the header, document title,
+// custom CSS, etc. These are the fields the snapshot endpoint emits at the
+// root level and that we replace on enter / restore on exit. Owners, roles,
+// and audit fields are intentionally excluded — Mike's snapshot endpoint
+// returns the live values for those (they aren't versioned) and swapping
+// them would imply they snap back to a historical state.
+const VERSIONED_DASHBOARD_INFO_FIELDS = [
+  'dashboard_title',
+  'description',
+  'slug',
+  'css',
+  'json_metadata',
+  'published',
+] as const;
+
+function normalizeSlicesFromSnapshot(
+  snapshot: VersionSnapshotPayload,
+): Record<number, Slice> {
+  const raw = snapshot.slices;
+  if (!raw) return {};
+  const result: Record<number, Slice> = {};
+  if (Array.isArray(raw)) {
+    raw.forEach(slice => {
+      const s = slice as unknown as Slice;
+      if (typeof s.slice_id === 'number') {
+        result[s.slice_id] = s;
+      }
+    });
+    return result;
+  }
+  // Already keyed by id
+  return raw as unknown as Record<number, Slice>;
+}
+
+function parsePositionJson(
+  positionJson: string | Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (!positionJson) return null;
+  if (typeof positionJson === 'object') return positionJson;
+  try {
+    return JSON.parse(positionJson);
+  } catch {
+    return null;
+  }
+}
+
+// A valid dashboard layout always contains at least the ROOT_ID + GRID_ID
+// keys. Bailing on missing structure prevents the renderer from crashing
+// when a snapshot's position_json is empty / malformed.
+function hasValidLayoutStructure(
+  layout: Record<string, unknown> | null,
+): layout is Record<string, unknown> {
+  return !!layout && 'ROOT_ID' in layout && 'GRID_ID' in layout;
+}
+
+/**
+ * Enters preview mode for the given dashboard snapshot. Captures current
+ * ``sliceEntities`` + ``dashboardLayout.present`` and replaces them with the
+ * snapshot's values. Cleanup must call ``exitVersionPreview``.
+ *
+ * Returns ``true`` when the preview was entered, ``false`` when the snapshot
+ * is unusable (missing/malformed ``position_json``) — callers can surface a
+ * toast in the latter case.
+ */
+export const enterVersionPreview =
+  (versionUuid: string, snapshot: VersionSnapshotPayload) =>
+  async (dispatch: AppDispatch, getState: GetState): Promise<boolean> => {
+    const parsedLayout = parsePositionJson(snapshot.position_json);
+    if (!hasValidLayoutStructure(parsedLayout)) {
+      // Bail BEFORE dispatching — otherwise the renderer crashes trying to
+      // walk a layout without ROOT_ID / GRID_ID.
+      return false;
+    }
+    // The dashboard's title is read by the Header from
+    // ``layout[DASHBOARD_HEADER_ID].meta.text``. Backend ``position_json``
+    // does not always carry an updated DASHBOARD_HEADER_ID block, so inject
+    // the snapshot's ``dashboard_title`` here to guarantee the visible H1
+    // reflects the preview.
+    const newLayout: Record<string, unknown> = { ...parsedLayout };
+    if (typeof snapshot.dashboard_title === 'string') {
+      const existingHeader = (parsedLayout[DASHBOARD_HEADER_ID] as
+        | { meta?: Record<string, unknown> }
+        | undefined) ?? { meta: {} };
+      newLayout[DASHBOARD_HEADER_ID] = {
+        ...existingHeader,
+        id: DASHBOARD_HEADER_ID,
+        type: DASHBOARD_HEADER_TYPE,
+        meta: {
+          ...(existingHeader.meta as Record<string, unknown> | undefined),
+          text: snapshot.dashboard_title,
+        },
+      };
+    }
+    const state = getState();
+    // Preserve the live state captured on the first enter. Switching from
+    // version A to version B without exiting must not recapture the
+    // already-swapped A state as the "original" — otherwise exit would
+    // restore to A rather than to the user's live data.
+    const existingPreview = state.dashboardState.versionPreview;
+    const capturedSliceEntities =
+      existingPreview?.capturedSliceEntities ?? state.sliceEntities;
+    const capturedLayout =
+      existingPreview?.capturedLayout ??
+      (
+        state as unknown as {
+          dashboardLayout: { present: Record<string, unknown> };
+        }
+      ).dashboardLayout.present;
+    // Capture the live values of the versioned scalar fields so EXIT can
+    // restore them. Always capture from ``state.dashboardInfo`` on first
+    // enter, even if the snapshot's payload omits a field — otherwise an
+    // A → B switch could drop the original value.
+    const liveDashboardInfo = (
+      state as unknown as { dashboardInfo?: Record<string, unknown> }
+    ).dashboardInfo;
+    const capturedDashboardInfo: Record<string, unknown> | null =
+      existingPreview?.capturedDashboardInfo ??
+      (liveDashboardInfo
+        ? VERSIONED_DASHBOARD_INFO_FIELDS.reduce(
+            (acc, key) => {
+              acc[key] = liveDashboardInfo[key];
+              return acc;
+            },
+            {} as Record<string, unknown>,
+          )
+        : null);
+    // Build the swap payload: only emit fields the snapshot actually
+    // carries. A missing field means "no change" — important for ``slug``
+    // and similar values that may be null in older snapshots.
+    const newDashboardInfo: Record<string, unknown> = {};
+    VERSIONED_DASHBOARD_INFO_FIELDS.forEach(key => {
+      if (key in snapshot) {
+        newDashboardInfo[key] = (snapshot as Record<string, unknown>)[key];
+      }
+    });
+    const snapshotSlices = normalizeSlicesFromSnapshot(snapshot);
+    // Merge — do not replace. The snapshot endpoint for dashboards does not
+    // currently emit a ``slices`` array; wiping the live entries would
+    // leave every CHART- component in the layout pointing at undefined and
+    // crash the renderer. When the snapshot does carry slices (or once the
+    // backend starts emitting them), those values override the live ones.
+    const liveSlices =
+      (capturedSliceEntities as { slices?: Record<string, unknown> }).slices ??
+      {};
+
+    // The snapshot's layout may reference chart ids that the live
+    // ``sliceEntities`` no longer has (chart removed from the dashboard
+    // after this version was committed, chart hard-deleted, etc.).
+    // Without fetching those, the renderer falls back to an empty
+    // chart slot + a "no chart definition" toast — verified live on
+    // dashboard 9 (chart id 100 referenced in v2, removed in v3).
+    const referencedChartIds = getChartIdsFromLayout(
+      parsedLayout as DashboardLayout,
+    );
+    const missingIds = referencedChartIds.filter(
+      id => !(id in liveSlices) && !(id in snapshotSlices),
+    );
+    let fetchedSlices: Record<string, unknown> = {};
+    if (missingIds.length > 0) {
+      try {
+        fetchedSlices = (await fetchSlicesByIds(missingIds)) as Record<
+          string,
+          unknown
+        >;
+      } catch (e) {
+        // Don't block preview entry on a slice fetch failure — the
+        // renderer's existing empty-slot fallback is strictly less bad
+        // than refusing the whole preview. The fetch helper logs to the
+        // network tab; user-visible "missing" charts render as before.
+        logging.warn('fetchSlicesByIds failed during preview entry', e);
+      }
+      // Anything still missing was actually deleted (404 in the response).
+      // Surface that as a clearer toast than the renderer's generic
+      // "no chart definition" message.
+      const stillMissing = missingIds.filter(id => !(id in fetchedSlices));
+      if (stillMissing.length > 0) {
+        dispatch(
+          addDangerToast(
+            t(
+              'Some charts in this version no longer exist and cannot be previewed.',
+            ),
+          ),
+        );
+      }
+    }
+
+    const mergedSlices = {
+      ...liveSlices,
+      ...fetchedSlices,
+      ...snapshotSlices,
+    };
+    dispatch({
+      type: ENTER_VERSION_PREVIEW,
+      versionUuid,
+      capturedSliceEntities,
+      capturedLayout,
+      capturedDashboardInfo,
+      newSliceEntities: {
+        ...(capturedSliceEntities as Record<string, unknown>),
+        slices: mergedSlices,
+      },
+      newLayout,
+      newDashboardInfo:
+        Object.keys(newDashboardInfo).length > 0 ? newDashboardInfo : null,
+    });
+    // The preview layout swap goes through the undoable reducer (see
+    // TRACKED_ACTIONS in undoableDashboardLayout). Clear that entry from
+    // history so a later Ctrl+Z can't take the user back into a previewed
+    // layout.
+    dispatch(UndoActionCreators.clearHistory());
+    return true;
+  };
+
+export const exitVersionPreview =
+  () =>
+  (dispatch: AppDispatch, getState: GetState): void => {
+    const { versionPreview } = getState().dashboardState;
+    if (!versionPreview) return;
+    dispatch({
+      type: EXIT_VERSION_PREVIEW,
+      restoreSliceEntities: versionPreview.capturedSliceEntities,
+      restoreLayout: versionPreview.capturedLayout,
+      restoreDashboardInfo: versionPreview.capturedDashboardInfo ?? null,
+    });
+    // Same reason as enter: drop the EXIT entry from undo history.
+    // Side-effect: any pre-preview undo stack is also wiped — the user
+    // cannot Ctrl+Z past the moment they entered preview after exiting.
+    // This is intentional: keeping a partial stack would let Undo
+    // walk back into snapshot state, which doesn't compose with the
+    // restored live layout.
+    dispatch(UndoActionCreators.clearHistory());
   };
