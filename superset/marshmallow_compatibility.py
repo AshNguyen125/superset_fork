@@ -45,6 +45,9 @@ def patch_marshmallow_for_flask_appbuilder() -> None:
     """
     import marshmallow
 
+    if getattr(marshmallow.Schema._init_fields, "__superset_compat_patched__", False):
+        return
+
     # Store the original method
     original_init_fields = marshmallow.Schema._init_fields
 
@@ -57,22 +60,22 @@ def patch_marshmallow_for_flask_appbuilder() -> None:
             try:
                 return original_init_fields(self)
             except KeyError as e:
-                # Extract the missing field name from the KeyError
-                missing_field = str(e).strip("'\"")
+                if not e.args or not isinstance(e.args[0], str):
+                    raise
+                missing_field = e.args[0]
 
-                # Initialize declared_fields if it doesn't exist
-                if not hasattr(self, "declared_fields"):
-                    self.declared_fields = {}
+                declared_fields = dict(getattr(self, "declared_fields", {}))
 
                 # Only add if it doesn't already exist
-                if missing_field not in self.declared_fields:
+                if missing_field not in declared_fields:
                     # Use Raw field as a safe fallback for unknown auto-generated
                     # fields. Allow both load and dump to support both input
                     # validation and serialization
-                    self.declared_fields[missing_field] = fields.Raw(
+                    declared_fields[missing_field] = fields.Raw(
                         allow_none=True,
                         load_default=None,  # Optional field (defaults to None)
                     )
+                    self.declared_fields = declared_fields
 
                     logger.debug(
                         "Marshmallow compatibility: Added missing field "
@@ -89,4 +92,5 @@ def patch_marshmallow_for_flask_appbuilder() -> None:
         )
 
     # Apply the patch
+    patched_init_fields.__superset_compat_patched__ = True
     marshmallow.Schema._init_fields = patched_init_fields

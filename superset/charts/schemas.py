@@ -459,7 +459,7 @@ class ChartDataAggregateOptionsSchema(ChartDataPostProcessingOperationOptionsSch
                 allow_none=False,
                 metadata={"description": "Columns by which to group by"},
             ),
-            validate=Length(min=1),
+            metadata={"minLength": 1},
             required=True,
         ),
     )
