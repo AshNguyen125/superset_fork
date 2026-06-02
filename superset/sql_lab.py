@@ -18,6 +18,7 @@
 import dataclasses
 import logging
 import sys
+import traceback
 import uuid
 from contextlib import closing
 from datetime import datetime
@@ -45,6 +46,7 @@ from superset.errors import ErrorLevel, SupersetError, SupersetErrorType
 from superset.exceptions import (
     OAuth2RedirectError,
     SupersetDisallowedSQLFunctionException,
+    SupersetDisallowedSQLTableException,
     SupersetDMLNotAllowedException,
     SupersetErrorException,
     SupersetErrorsException,
@@ -121,6 +123,9 @@ def handle_query_error(
 
     db.session.commit()
     payload.update({"status": query.status, "error": msg, "errors": errors_payload})
+    if app.config.get("SHOW_STACKTRACE"):
+        if stacktrace := traceback.format_exc():
+            payload["stacktrace"] = stacktrace
     if troubleshooting_link := app.config["TROUBLESHOOTING_LINK"]:
         payload["link"] = troubleshooting_link
     return payload
@@ -191,7 +196,7 @@ def get_sql_results(  # pylint: disable=too-many-arguments
                     log_params=log_params,
                 )
             except Exception as ex:  # pylint: disable=broad-except
-                logger.debug("Query %d: %s", query_id, ex)
+                logger.exception("Query %d: %s", query_id, ex)
                 stats_logger = app.config["STATS_LOGGER"]
                 stats_logger.incr("error_sqllab_unhandled")
                 query = get_query(query_id=query_id)
@@ -410,6 +415,20 @@ def execute_sql_statements(  # noqa: C901
         disallowed_functions
     ):
         raise SupersetDisallowedSQLFunctionException(disallowed_functions)
+
+    disallowed_tables = app.config["DISALLOWED_SQL_TABLES"].get(
+        db_engine_spec.engine,
+        set(),
+    )
+    if disallowed_tables and parsed_script.check_tables_present(disallowed_tables):
+        # Report only the tables actually found in the query
+        found_tables = set()
+        for statement in parsed_script.statements:
+            present = {table.table.lower() for table in statement.tables}
+            for table in disallowed_tables:
+                if table.lower() in present:
+                    found_tables.add(table)
+        raise SupersetDisallowedSQLTableException(found_tables or disallowed_tables)
 
     if parsed_script.has_mutation() and not database.allow_dml:
         raise SupersetDMLNotAllowedException()

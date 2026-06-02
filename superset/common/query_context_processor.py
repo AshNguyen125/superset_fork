@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, cast, ClassVar, TYPE_CHECKING
+from typing import Any, cast, ClassVar, Sequence, TYPE_CHECKING
 
 import pandas as pd
 from flask import current_app
@@ -29,7 +29,6 @@ from superset.common.db_query_status import QueryStatus
 from superset.common.query_actions import get_query_results
 from superset.common.utils.query_cache_manager import QueryCacheManager
 from superset.common.utils.time_range_utils import get_since_until_from_time_range
-from superset.connectors.sqla.models import BaseDatasource
 from superset.constants import CACHE_DISABLED_TIMEOUT, CacheRegion
 from superset.daos.annotation_layer import AnnotationLayerDAO
 from superset.daos.chart import ChartDAO
@@ -37,6 +36,7 @@ from superset.exceptions import (
     QueryObjectValidationError,
     SupersetException,
 )
+from superset.explorables.base import Explorable
 from superset.extensions import cache_manager, security_manager
 from superset.models.helpers import QueryResult
 from superset.superset_typing import AdhocColumn, AdhocMetric
@@ -70,7 +70,7 @@ class QueryContextProcessor:
     """
 
     _query_context: QueryContext
-    _qc_datasource: BaseDatasource
+    _qc_datasource: Explorable
 
     def __init__(self, query_context: QueryContext):
         self._query_context = query_context
@@ -97,6 +97,18 @@ class QueryContextProcessor:
             force_query=force_query,
             force_cached=force_cached,
         )
+
+        # If cache is loaded but missing applied_filter_columns and query has filters,
+        # treat as cache miss to ensure fresh query with proper applied_filter_columns
+        if (
+            query_obj
+            and cache_key
+            and cache.is_loaded
+            and not cache.applied_filter_columns
+            and query_obj.filter
+            and len(query_obj.filter) > 0
+        ):
+            cache.is_loaded = False
 
         if query_obj and cache_key and not cache.is_loaded:
             try:
@@ -178,9 +190,22 @@ class QueryContextProcessor:
         )
         cache.df.columns = [unescape_separator(col) for col in cache.df.columns.values]
 
+        warning: str | None = None
+        if cache.bq_memory_limited:
+            row_count = cache.bq_memory_limited_row_count
+            chart_id = (self._query_context.form_data or {}).get("slice_id", "")
+            prefix = f"Chart {chart_id}: " if chart_id else ""
+            warning = _(
+                "%(prefix)sResults truncated to %(row_count)s rows"
+                " due to memory constraints.",
+                prefix=prefix,
+                row_count=f"{row_count:,}",
+            )
+
         return {
             "cache_key": cache_key,
             "cached_dttm": cache.cache_dttm,
+            "queried_dttm": cache.queried_dttm,
             "cache_timeout": self.get_cache_timeout(),
             "df": cache.df,
             "applied_template_filters": cache.applied_template_filters,
@@ -197,6 +222,7 @@ class QueryContextProcessor:
             "from_dttm": query_obj.from_dttm,
             "to_dttm": query_obj.to_dttm,
             "label_map": label_map,
+            "warning": warning,
         }
 
     def query_cache_key(self, query_obj: QueryObject, **kwargs: Any) -> str | None:
@@ -246,14 +272,20 @@ class QueryContextProcessor:
                 )
             elif self._query_context.result_format == ChartDataResultFormat.XLSX:
                 excel.apply_column_types(df, coltypes)
-                result = excel.df_to_excel(df, **current_app.config["EXCEL_EXPORT"])
+                result = excel.df_to_excel(
+                    df, index=include_index, **current_app.config["EXCEL_EXPORT"]
+                )
             return result or ""
 
         return df.to_dict(orient="records")
 
-    def ensure_totals_available(self) -> None:
-        queries_needing_totals = []
-        totals_queries = []
+    def _prepare_contribution_totals(self) -> tuple[list[int], int | None]:
+        """
+        Identify contribution queries and normalize the totals query so cache keys
+        align with cached results.
+        """
+        queries_needing_totals: list[int] = []
+        totals_idx: int | None = None
 
         for i, query in enumerate(self._query_context.queries):
             needs_totals = any(
@@ -267,16 +299,27 @@ class QueryContextProcessor:
             is_totals_query = (
                 not query.columns and query.metrics and not query.post_processing
             )
-            if is_totals_query:
-                totals_queries.append(i)
+            if is_totals_query and totals_idx is None:
+                totals_idx = i
 
-        if not queries_needing_totals or not totals_queries:
+        if queries_needing_totals and totals_idx is not None:
+            totals_query = self._query_context.queries[totals_idx]
+            totals_query.row_limit = None
+
+        return queries_needing_totals, totals_idx
+
+    def ensure_totals_available(
+        self,
+        queries_needing_totals: Sequence[int] | None = None,
+        totals_idx: int | None = None,
+    ) -> None:
+        if queries_needing_totals is None or totals_idx is None:
+            queries_needing_totals, totals_idx = self._prepare_contribution_totals()
+
+        if not queries_needing_totals or totals_idx is None:
             return
 
-        totals_idx = totals_queries[0]
         totals_query = self._query_context.queries[totals_idx]
-
-        totals_query.row_limit = None
 
         result = self._query_context.get_query_result(totals_query)
         df = result.df
@@ -299,10 +342,12 @@ class QueryContextProcessor:
     ) -> dict[str, Any]:
         """Returns the query results with both metadata and data"""
 
+        queries_needing_totals, totals_idx = self._prepare_contribution_totals()
+
         # Skip ensure_totals_available when force_cached=True
         # This prevents recalculating contribution_totals from cached results
         if not force_cached:
-            self.ensure_totals_available()
+            self.ensure_totals_available(queries_needing_totals, totals_idx)
 
             # Update cache_values to reflect modifications made by
             # ensure_totals_available()
