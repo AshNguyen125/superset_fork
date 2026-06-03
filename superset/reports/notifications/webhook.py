@@ -32,6 +32,7 @@ from superset.reports.notifications.exceptions import (
 )
 from superset.utils import json
 from superset.utils.decorators import statsd_gauge
+from superset.utils.network import is_safe_host
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,24 @@ class WebhookNotification(BaseNotification):
                 )
         return files
 
+    def _validate_webhook_url(self, url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise NotificationParamException(
+                "Webhook failed: only HTTP and HTTPS webhook URLs are supported."
+            )
+        if current_app.config["ALERT_REPORTS_WEBHOOK_HTTPS_ONLY"]:
+            if parsed.scheme.lower() != "https":
+                raise NotificationParamException(
+                    "Webhook failed: HTTPS is required by config for webhook URLs."
+                )
+        if not parsed.hostname:
+            raise NotificationParamException(
+                "Webhook failed: URL must include a valid hostname."
+            )
+        if not is_safe_host(parsed.hostname):
+            raise NotificationParamException("Webhook URL target host is not allowed.")
+
     @backoff.on_exception(
         backoff.expo, NotificationUnprocessableException, factor=10, base=2, max_tries=5
     )
@@ -104,11 +123,7 @@ class WebhookNotification(BaseNotification):
                 is not enabled."
             )
         wh_url = self._get_webhook_url()
-        if current_app.config["ALERT_REPORTS_WEBHOOK_HTTPS_ONLY"]:
-            if urlparse(wh_url).scheme.lower() != "https":
-                raise NotificationParamException(
-                    "Webhook failed: HTTPS is required by config for webhook URLs."
-                )
+        self._validate_webhook_url(wh_url)
         payload = self._get_req_payload()
         files = self._get_files()
 
