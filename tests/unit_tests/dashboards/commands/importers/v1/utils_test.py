@@ -666,3 +666,150 @@ def test_update_id_refs_handles_missing_time_grains():
     filter_config = fixed["metadata"]["native_filter_configuration"][0]
     assert filter_config.get("filterType") == "filter_timegrain"
     assert "time_grains" not in filter_config
+
+
+def test_build_uuid_to_id_map_missing_meta():
+    """Charts with missing or non-dict ``meta`` should be silently skipped."""
+    from superset.commands.dashboard.importers.v1.utils import build_uuid_to_id_map
+
+    position: dict[str, Any] = {
+        "CHART-OK": {
+            "type": "CHART",
+            "meta": {"uuid": "uuid1", "chartId": 1},
+        },
+        "CHART-NO-META": {
+            "type": "CHART",
+            # meta key is completely absent
+        },
+        "CHART-NULL-META": {
+            "type": "CHART",
+            "meta": None,
+        },
+        "CHART-STRING-META": {
+            "type": "CHART",
+            "meta": "corrupt",
+        },
+        "ROW-NORMAL": {
+            "type": "ROW",
+            "meta": {},
+        },
+        "DASHBOARD_VERSION_KEY": "v2",
+    }
+
+    result = build_uuid_to_id_map(position)
+    assert result == {"uuid1": 1}
+
+
+def test_build_uuid_to_id_map_missing_type():
+    """Position entries without a ``type`` key should be skipped."""
+    from superset.commands.dashboard.importers.v1.utils import build_uuid_to_id_map
+
+    position: dict[str, Any] = {
+        "CHART-NO-TYPE": {
+            "meta": {"uuid": "uuid1", "chartId": 1},
+        },
+        "CHART-OK": {
+            "type": "CHART",
+            "meta": {"uuid": "uuid2", "chartId": 2},
+        },
+    }
+
+    result = build_uuid_to_id_map(position)
+    assert result == {"uuid2": 2}
+
+
+def test_find_chart_uuids_missing_meta():
+    """``find_chart_uuids`` should not raise when chart meta is missing."""
+    from superset.commands.dashboard.importers.v1.utils import find_chart_uuids
+
+    position: dict[str, Any] = {
+        "CHART-OK": {
+            "type": "CHART",
+            "meta": {"uuid": "uuid1", "chartId": 1},
+        },
+        "CHART-BROKEN": {
+            "type": "CHART",
+            # no meta
+        },
+    }
+
+    result = find_chart_uuids(position)
+    assert result == {"uuid1"}
+
+
+def test_update_id_refs_position_missing_meta():
+    """Position entries with missing meta should be skipped during ID remapping."""
+    from superset.commands.dashboard.importers.v1.utils import update_id_refs
+
+    config: dict[str, Any] = {
+        "position": {
+            "CHART-OK": {
+                "type": "CHART",
+                "meta": {"chartId": 101, "uuid": "uuid1"},
+            },
+            "CHART-NO-META": {
+                "type": "CHART",
+            },
+            "CHART-NULL-META": {
+                "type": "CHART",
+                "meta": None,
+            },
+        },
+        "metadata": {"native_filter_configuration": []},
+    }
+    chart_ids = {"uuid1": 1}
+    dataset_info: dict[str, dict[str, Any]] = {}
+
+    fixed = update_id_refs(config, chart_ids, dataset_info)
+
+    assert fixed["position"]["CHART-OK"]["meta"]["chartId"] == 1
+    assert "meta" not in fixed["position"]["CHART-NO-META"]
+    assert fixed["position"]["CHART-NULL-META"]["meta"] is None
+
+
+def test_update_id_refs_timed_refresh_immune_missing_ids():
+    """Stale IDs in ``timed_refresh_immune_slices`` should be dropped."""
+    from superset.commands.dashboard.importers.v1.utils import update_id_refs
+
+    config: dict[str, Any] = {
+        "position": {
+            "CHART1": {
+                "type": "CHART",
+                "meta": {"chartId": 101, "uuid": "uuid1"},
+            },
+        },
+        "metadata": {
+            "timed_refresh_immune_slices": [101, 999],
+            "native_filter_configuration": [],
+        },
+    }
+    chart_ids = {"uuid1": 1}
+    dataset_info: dict[str, dict[str, Any]] = {}
+
+    fixed = update_id_refs(config, chart_ids, dataset_info)
+
+    assert fixed["metadata"]["timed_refresh_immune_slices"] == [1]
+
+
+def test_update_id_refs_expanded_slices_missing_ids():
+    """Stale IDs in ``expanded_slices`` should be dropped."""
+    from superset.commands.dashboard.importers.v1.utils import update_id_refs
+
+    config: dict[str, Any] = {
+        "position": {
+            "CHART1": {
+                "type": "CHART",
+                "meta": {"chartId": 101, "uuid": "uuid1"},
+            },
+        },
+        "metadata": {
+            "expanded_slices": {"101": "details", "999": "stale"},
+            "native_filter_configuration": [],
+        },
+    }
+    chart_ids = {"uuid1": 1}
+    dataset_info: dict[str, dict[str, Any]] = {}
+
+    fixed = update_id_refs(config, chart_ids, dataset_info)
+
+    assert fixed["metadata"]["expanded_slices"] == {"1": "details"}
