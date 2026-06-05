@@ -32,14 +32,19 @@ import click
 
 # Monkey-patch click to redirect output to stderr in stdio mode
 if os.environ.get("FASTMCP_TRANSPORT", "stdio") == "stdio":
+    original_echo = click.echo
     original_secho = click.secho
+
+    def echo_to_stderr(*args: Any, **kwargs: Any) -> Any:
+        kwargs["file"] = sys.stderr
+        return original_echo(*args, **kwargs)
 
     def secho_to_stderr(*args: Any, **kwargs: Any) -> Any:
         kwargs["file"] = sys.stderr
         return original_secho(*args, **kwargs)
 
+    click.echo = echo_to_stderr
     click.secho = secho_to_stderr
-    click.echo = lambda *args, **kwargs: click.echo(*args, file=sys.stderr, **kwargs)
 
 from superset.mcp_service.app import init_fastmcp_server, mcp
 from superset.mcp_service.middleware import create_response_size_guard_middleware
