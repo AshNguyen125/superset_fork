@@ -11949,7 +11949,8 @@ msgstr ""
 msgid "Subtitle"
 msgstr ""
 
-msgid "Subtotal"
+#, python-format
+msgid "Subvalue (%(aggregatorName)s)"
 msgstr ""
 
 msgid "Success"
