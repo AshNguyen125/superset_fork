@@ -20,6 +20,7 @@ from functools import partial
 from typing import Any, Optional, TypedDict
 
 import pandas as pd
+from flask import current_app
 from flask_babel import lazy_gettext as _
 from werkzeug.datastructures import FileStorage
 
@@ -29,6 +30,7 @@ from superset.commands.database.exceptions import (
     DatabaseNotFoundError,
     DatabaseSchemaUploadNotAllowed,
     DatabaseUploadFailed,
+    DatabaseUploadFileTooLarge,
     DatabaseUploadNotSupported,
     DatabaseUploadSaveMetadataFailed,
 )
@@ -188,6 +190,35 @@ class UploadCommand(BaseCommand):
 
         sqla_table.fetch_metadata()
 
+    @staticmethod
+    def _file_size_bytes(file: Any) -> int:
+        """Return the size of an uploaded file without consuming its stream."""
+        stream = getattr(file, "stream", file)
+        position = stream.tell()
+        stream.seek(0, 2)  # seek to end
+        size = stream.tell()
+        stream.seek(position)  # restore the original position
+        return size
+
+    @classmethod
+    def validate_file_size(cls, file: Any) -> None:
+        """
+        Reject a file whose size exceeds ``UPLOAD_MAX_FILE_SIZE_BYTES``.
+
+        Shared by the upload command and the metadata endpoint so oversized
+        files are rejected before their contents are read into memory,
+        regardless of which path is used.
+
+        :raises DatabaseUploadFileTooLarge: if the file is larger than the limit
+        """
+        max_file_size = current_app.config.get("UPLOAD_MAX_FILE_SIZE_BYTES")
+        if (
+            max_file_size is not None
+            and file is not None
+            and cls._file_size_bytes(file) > max_file_size
+        ):
+            raise DatabaseUploadFileTooLarge()
+
     def validate(self) -> None:
         self._model = DatabaseDAO.find_by_id(self._model_id)
         if not self._model:
@@ -196,3 +227,5 @@ class UploadCommand(BaseCommand):
             raise DatabaseSchemaUploadNotAllowed()
         if not self._model.db_engine_spec.supports_file_upload:
             raise DatabaseUploadNotSupported()
+
+        self.validate_file_size(self._file)
