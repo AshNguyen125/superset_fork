@@ -21,6 +21,7 @@ from typing import Any
 
 from superset import db, security_manager
 from superset.commands.exceptions import ImportFailedError
+from superset.commands.importers.v1.utils import find_existing_for_import
 from superset.migrations.shared.migrate_viz import processors
 from superset.migrations.shared.migrate_viz.base import MigrateViz
 from superset.models.slice import Slice
@@ -48,20 +49,96 @@ def import_chart(
     overwrite: bool = False,
     ignore_permissions: bool = False,
 ) -> Slice:
+    """Import a chart from a config dict, handling existing matches.
+
+    Permission model for an existing UUID match:
+
+    +--------------+---------------+---------------------+-----------------+
+    | Existing row | overwrite arg | Caller has perms?   | Outcome         |
+    +==============+===============+=====================+=================+
+    | alive        | False         | (n/a)               | return existing |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write + owner   | UPDATE in place |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write + owner   | restore + UPDATE|
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | not can_write       | raise (Case B)  |
+    +--------------+---------------+---------------------+-----------------+
+
+    Re-importing a soft-deleted UUID is implicitly a restore-with-update:
+    the user is bringing the chart back by uploading it again. We apply
+    the same ownership check as the explicit overwrite path so non-owners
+    cannot resurrect via re-import, and we raise rather than silently
+    returning a soft-deleted row to callers without write permission
+    (which would let them reattach dashboards to a deleted chart).
+    """
     can_write = ignore_permissions or security_manager.can_access("can_write", "Chart")
-    existing = db.session.query(Slice).filter_by(uuid=config["uuid"]).first()
+    # `user` is None for background / example-loader paths (no Flask request
+    # user). Combined with ``can_write=True`` (typically from
+    # ``ignore_permissions=True``), the ownership check below is intentionally
+    # skipped because the caller has already established trust at the command
+    # level. This matches pre-existing overwrite behaviour but now also applies
+    # to soft-deleted matches via ``needs_mutation``.
     user = get_user()
-    if existing:
-        if overwrite and can_write and user:
+
+    if existing := find_existing_for_import(Slice, config["uuid"]):
+        is_soft_deleted = existing.deleted_at is not None
+        needs_mutation = overwrite or is_soft_deleted
+        if needs_mutation and can_write and user:
             if not security_manager.can_access_chart(existing) or (
                 user not in existing.owners and not security_manager.is_admin()
             ):
                 raise ImportFailedError(
-                    "A chart already exists and user doesn't "
-                    "have permissions to overwrite it"
+                    "A chart already exists and user doesn't have "
+                    "permissions to "
+                    f"{'restore' if is_soft_deleted else 'overwrite'} it"
                 )
-        if not overwrite or not can_write:
+        if is_soft_deleted and not can_write:
+            # Case B: would-be restore-via-import without write permission.
+            # Raise rather than silently returning the soft-deleted row,
+            # which would let callers (e.g., the dashboard importer)
+            # reattach to a deleted chart and produce a broken dashboard.
+            #
+            # Keyed on ``is_soft_deleted`` rather than ``needs_mutation``: an
+            # *active* row imported with overwrite=True but no can_write is not
+            # a restore, so it must fall through to ``return existing`` below
+            # (the pre-soft-delete overwrite-without-permission behaviour)
+            # instead of raising the restore error.
+            raise ImportFailedError(
+                "Chart was deleted and re-import requires can_write "
+                "permission to restore it"
+            )
+        if not needs_mutation or not can_write:
             return existing
+        # Mutation path. Restore a soft-deleted match in place rather
+        # than hard-delete-and-replace: a hard delete would cascade to
+        # dashboard_slices and other FK references, breaking the
+        # dashboards that previously embedded this chart.
+        #
+        # How the restore lands as an UPDATE: clearing
+        # existing.deleted_at marks the in-session row dirty and the
+        # explicit flush emits the deleted_at = NULL UPDATE before
+        # Slice.import_from_dict (below) does its own query-by-uuid
+        # lookup. Without the flush we would be relying on autoflush
+        # ahead of that internal query — correct under default session
+        # config but a hidden contract; the explicit flush makes it
+        # robust. The lookup then finds the now-live row (the listener
+        # filters deleted_at IS NULL) and import_from_dict applies the
+        # config as field updates on the existing object, preserving
+        # the PK. Note: config["id"] is set defensively, but
+        # ImportExportMixin.import_from_dict strips it today because
+        # Slice.export_fields does not contain "id"; what actually
+        # binds to the existing row is the uuid uniqueness constraint
+        # used inside import_from_dict.
+        if is_soft_deleted:
+            existing.deleted_at = None
+            db.session.flush()
         config["id"] = existing.id
     elif not can_write:
         raise ImportFailedError(
@@ -80,7 +157,7 @@ def import_chart(
     if chart.id is None:
         db.session.flush()
 
-    if (user := get_user()) and user not in chart.owners:
+    if user and user not in chart.owners:
         chart.owners.append(user)
 
     return chart
