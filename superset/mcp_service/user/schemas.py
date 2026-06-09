@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any, List, Literal
 
@@ -44,6 +45,8 @@ from superset.mcp_service.utils.schema_utils import (
     parse_json_or_list,
     parse_json_or_model_list,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_USER_COLUMNS = ["id", "username", "first_name", "last_name", "active"]
 
@@ -104,6 +107,30 @@ class UserInfo(BaseModel):
         "access via get_user_info; not available in list_users because roles "
         "is a relationship, not a selectable column)",
     )
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def _extract_role_names(cls, v: Any) -> list[str] | None:
+        """Coerce Role ORM objects to their .name strings."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Preserve Pydantic's default rejection of bare strings for list[str].
+            raise ValueError("roles must be a list, not a string")
+        result: list[str] = []
+        for item in v:
+            if isinstance(item, str):
+                result.append(item)
+                continue
+            try:
+                if hasattr(item, "name") and isinstance(item.name, str):
+                    result.append(item.name)
+            except DetachedInstanceError:
+                logger.debug(
+                    "Skipping role with detached instance in UserInfo.roles coercion"
+                )
+        return result
+
     changed_on: str | datetime | None = Field(
         None, description="Last modification timestamp"
     )
