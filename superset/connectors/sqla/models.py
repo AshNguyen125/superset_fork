@@ -781,15 +781,82 @@ class BaseDatasource(
             rules are always included regardless of this parameter.
         :returns: A list of SQL clauses to be ANDed together.
         """
+        from superset.models.helpers import RLS_IN_PROGRESS_TABLE_IDS
+
+        # Circular reference detection
+        table_ids = RLS_IN_PROGRESS_TABLE_IDS.get()
+        if self.id in table_ids:
+            raise SupersetSecurityException(
+                SupersetError(
+                    error_type=SupersetErrorType.FAILED_FETCHING_DATASOURCE_INFO_ERROR,
+                    message=_(
+                        "Circular RLS policy detected for table: %(table)s",
+                        table=self.table_name,
+                    ),
+                    level=ErrorLevel.ERROR,
+                )
+            )
+
+        token = RLS_IN_PROGRESS_TABLE_IDS.set(table_ids | {self.id})
+        try:
+            return self._get_processed_rls_filters(
+                template_processor, include_global_guest_rls
+            )
+        finally:
+            RLS_IN_PROGRESS_TABLE_IDS.reset(token)
+
+    def _process_rls_clause(
+        self,
+        clause: str,
+        template_processor: Optional[BaseTemplateProcessor] = None,
+    ) -> TextClause:
+        """
+        Process an RLS clause with security validation and template processing.
+
+        RLS clauses are WHERE-predicate fragments (e.g. ``name = 'admin'``).
+        We validate them with ``is_predicate=True`` so the parser wraps the
+        clause in ``SELECT * WHERE <clause>`` rather than the column-expression
+        wrapper ``SELECT <clause>`` used by ``_process_select_expression``.
+        """
+        from superset.models.helpers import validate_adhoc_subquery
+
+        # Validate the raw clause for subquery injection before rendering
+        # Jinja templates.  validate_adhoc_subquery strips Jinja internally
+        # for parsing but returns the original clause unchanged when it
+        # contains template syntax, so downstream template processing is
+        # preserved.
+        validated = validate_adhoc_subquery(
+            clause,
+            self.database,
+            self.catalog,
+            self.schema or "",
+            self.database.backend,
+            is_predicate=True,
+        )
+
+        # Render Jinja templates after validation.
+        processed = (
+            template_processor.process_template(validated)
+            if template_processor
+            else validated
+        )
+        return self.text(f"({processed})")
+
+    def _get_processed_rls_filters(
+        self,
+        template_processor: Optional[BaseTemplateProcessor] = None,
+        include_global_guest_rls: bool = True,
+    ) -> list[TextClause]:
+        """
+        Private helper to process RLS filters.
+        """
         template_processor = template_processor or self.get_template_processor()
 
         all_filters: list[TextClause] = []
         filter_groups: dict[Union[int, str], list[TextClause]] = defaultdict(list)
         try:
             for filter_ in security_manager.get_rls_filters(self):
-                clause = self.text(
-                    f"({template_processor.process_template(filter_.clause)})"
-                )
+                clause = self._process_rls_clause(filter_.clause, template_processor)
                 if filter_.group_key:
                     filter_groups[filter_.group_key].append(clause)
                 else:
@@ -799,10 +866,10 @@ class BaseDatasource(
                 for rule in security_manager.get_guest_rls_filters(self):
                     if not include_global_guest_rls and not rule.get("dataset"):
                         continue
-                    clause = self.text(
-                        f"({template_processor.process_template(rule['clause'])})"
+
+                    all_filters.append(
+                        self._process_rls_clause(rule["clause"], template_processor)
                     )
-                    all_filters.append(clause)
 
             grouped_filters = [or_(*clauses) for clauses in filter_groups.values()]
             all_filters.extend(grouped_filters)
