@@ -321,6 +321,10 @@ class TestBigQueryDbEngineSpec(SupersetTestCase):
         )
 
         table.database.sqlalchemy_uri = "bigquery://"
+        # Clear the schema so BigQuery's adjust_engine_params does not try to
+        # set the default dataset to the PostgreSQL "public" schema, which would
+        # trigger a real credential check and fail in CI without GCP credentials.
+        table.schema = None
         query_obj = {
             "groupby": ["gender_cc"],
             "is_timeseries": False,
