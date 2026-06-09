@@ -374,6 +374,7 @@ export const exportChart = async ({
       relative: true,
       includeAppRoot: false,
     });
+    url = url ? url.replace(/^https?:\/\/[^/]+/, '') : url; // remove origin from url because added later by the SupersetClient
     payload = formData;
   } else {
     url = '/api/v1/chart/data';
