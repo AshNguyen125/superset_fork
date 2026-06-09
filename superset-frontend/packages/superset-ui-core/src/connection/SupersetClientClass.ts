@@ -208,6 +208,14 @@ export default class SupersetClientClass {
       headers: { ...this.headers, ...headers },
       timeout: timeout ?? this.timeout,
       fetchRetryOptions: fetchRetryOptions ?? this.fetchRetryOptions,
+      // Inbound normalisation seam (Slice 7, 2026-06-01): strip the configured
+      // application root from router-relative URL fields in JSON responses so
+      // outbound helpers (SupersetClient.getUrl, makeUrl, react-router
+      // basename) don't re-prefix them into `/superset/superset/...`.
+      // `@superset-ui/core` cannot import the app's `applicationRoot()`, so we
+      // thread `this.appRoot` through `callApiAndParseWithTimeout` →
+      // `parseResponse` here. Both `json` and `json-bigint` paths are covered.
+      appRoot: this.appRoot,
     }).catch(res => {
       if (res?.status === 401 && !ignoreUnauthorized) {
         this.handleUnauthorized();
@@ -276,8 +284,26 @@ export default class SupersetClientClass {
     const host = inputHost ?? this.host;
     const cleanHost = host.slice(-1) === '/' ? host.slice(0, -1) : host; // no backslash
 
+    // Strip a single leading appRoot segment so callers that accidentally
+    // pre-prefix their endpoint (e.g. by wrapping with ensureAppRoot before
+    // passing to the client) do not produce a doubled `/superset/superset/...`
+    // URL. Single-pass strip (AF-5 reconciliation, 2026-06-01) mirrors
+    // `stripAppRoot` in `src/utils/pathUtils` and `normalizeBackendUrlString`
+    // exactly: a genuine `/superset/superset/<slug>` is a legitimate route, not
+    // a double-prefix bug. The L2 static invariant still flags pre-prefixing as
+    // a migration issue; this is the runtime safety net.
+    let cleanEndpoint = endpoint;
+    const root = this.appRoot;
+    if (root) {
+      if (cleanEndpoint === root) {
+        cleanEndpoint = '';
+      } else if (cleanEndpoint.startsWith(`${root}/`)) {
+        cleanEndpoint = cleanEndpoint.slice(root.length);
+      }
+    }
+
     return `${this.protocol}//${cleanHost}${this.appRoot}/${
-      endpoint[0] === '/' ? endpoint.slice(1) : endpoint
+      cleanEndpoint[0] === '/' ? cleanEndpoint.slice(1) : cleanEndpoint
     }`;
   }
 }

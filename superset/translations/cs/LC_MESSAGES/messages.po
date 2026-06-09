@@ -18,7 +18,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Superset VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-05 12:59+0300\n"
+"POT-Creation-Date: 2026-06-05 13:45-0700\n"
 "PO-Revision-Date: 2016-05-02 08:49-0700\n"
 "Last-Translator: Jan Šmejkal <jan.smejkal@orgis.cz>\n"
 "Language: cs\n"
@@ -2202,6 +2202,9 @@ msgstr "Opravdu chcete smazat vybrané skupiny?"
 msgid "Are you sure you want to delete the selected layers?"
 msgstr "Opravdu chcete smazat vybrané vrstvy?"
 
+msgid "Are you sure you want to delete the selected queries?"
+msgstr ""
+
 msgid "Are you sure you want to delete the selected roles?"
 msgstr "Opravdu chcete smazat vybrané role?"
 
@@ -3904,6 +3907,9 @@ msgstr "Připojení selhalo, zkontrolujte prosím nastavení připojení"
 msgid "Connection failed, please check your connection settings."
 msgstr "Připojení selhalo, zkontrolujte prosím nastavení připojení."
 
+msgid "Connection looks good!"
+msgstr ""
+
 #, fuzzy
 msgid "Contains"
 msgstr "Obsahuje"
@@ -3981,6 +3987,9 @@ msgstr "Kopírovat dotaz oddílu do schránky"
 
 msgid "Copy permalink to clipboard"
 msgstr "Kopírovat trvalý odkaz do schránky"
+
+msgid "Copy query URL"
+msgstr ""
 
 msgid "Copy query link to your clipboard"
 msgstr "Kopírovat odkaz na dotaz do schránky"
@@ -5074,6 +5083,9 @@ msgstr "Smazat skupinu"
 msgid "Delete item"
 msgstr "Smazat položku"
 
+msgid "Delete query"
+msgstr ""
+
 msgid "Delete role"
 msgstr "Smazat roli"
 
@@ -5770,6 +5782,10 @@ msgstr "EMAIL_REPORTS_CTA"
 msgid "ERROR"
 msgstr "CHYBA"
 
+#, python-format
+msgid "ERROR: %s"
+msgstr ""
+
 msgid "Edge length"
 msgstr "Délka hrany"
 
@@ -5862,6 +5878,9 @@ msgstr "Upravit skupinu"
 
 msgid "Edit properties"
 msgstr "Upravit vlastnosti"
+
+msgid "Edit query"
+msgstr ""
 
 #, fuzzy
 msgid "Edit report"
@@ -6469,6 +6488,9 @@ msgstr "Export selhal - prosím zkuste to znovu"
 #, fuzzy, python-format
 msgid "Export failed: %s"
 msgstr "Export selhal: %s"
+
+msgid "Export query"
+msgstr ""
 
 msgid "Export screenshot (jpeg)"
 msgstr "Exportovat screenshot (jpeg)"
@@ -8335,6 +8357,9 @@ msgstr "Sloupec spojnic"
 
 msgid "Lines encoding"
 msgstr "Kódování spojnic"
+
+msgid "Link Copied!"
+msgstr ""
 
 #, fuzzy
 msgid "List"
@@ -14533,6 +14558,9 @@ msgstr "Při načítání stavu oblíbenosti došlo k chybě: %s"
 msgid "There was an error fetching the filtered charts and dashboards:"
 msgstr "Při načítání filtrovaných grafů a nástěnek došlo k chybě:"
 
+msgid "There was an error generating the permalink."
+msgstr ""
+
 #, fuzzy
 msgid "There was an error loading groups."
 msgstr "Při načítání uživatelů došlo k chybě."
@@ -14635,6 +14663,10 @@ msgid "There was an issue deleting the selected layers: %s"
 msgstr "Při mazání vybraných vrstev došlo k problému: %s"
 
 #, python-format
+msgid "There was an issue deleting the selected queries: %s"
+msgstr ""
+
+#, python-format
 msgid "There was an issue deleting the selected templates: %s"
 msgstr "Při mazání vybraných šablon došlo k problému: %s"
 
@@ -14669,6 +14701,9 @@ msgstr "Při exportu vybraných grafů došlo k problému: %s"
 #, fuzzy
 msgid "There was an issue exporting the selected dashboards"
 msgstr "Při exportu vybraných nástěnek došlo k problému."
+
+msgid "There was an issue exporting the selected queries"
+msgstr ""
 
 #, fuzzy
 msgid "There was an issue exporting the selected themes"
@@ -15000,6 +15035,9 @@ msgstr ""
 "Tento objekt JSON popisuje umístění widgetů v nástěnce. Je generován "
 "dynamicky při úpravě velikosti a pozic widgetů pomocí přetahování v "
 "zobrazení nástěnky"
+
+msgid "This link cannot be followed because its address is unsafe."
+msgstr ""
 
 msgid ""
 "This link will take you to an external website. We cannot guarantee the "
@@ -15797,6 +15835,9 @@ msgid "Unpin from the result panel"
 msgstr "Připnout k panelu výsledků"
 
 msgid "Unpin from top"
+msgstr ""
+
+msgid "Unsafe link blocked"
 msgstr ""
 
 #, python-format
@@ -18074,6 +18115,9 @@ msgstr "Vyžadováno oprávnění"
 msgid "quarter"
 msgstr "čtvrtletí"
 
+msgid "queries"
+msgstr ""
+
 msgid "query"
 msgstr "dotaz"
 
@@ -18241,10 +18285,6 @@ msgstr "hodnota vzestupně"
 msgid "value descending"
 msgstr "hodnota sestupně"
 
-#, fuzzy
-msgid "valuename"
-msgstr "Název tabulky"
-
 msgid "var"
 msgstr "var"
 
@@ -18292,6 +18332,26 @@ msgstr "your-project-1234-a1"
 
 msgid "zoom area"
 msgstr "oblast přiblížení"
+
+#, python-brace-format
+msgid ""
+"{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;"
+"\n"
+"\n"
+"/** The classic emailregex.com regex for RFC 5322-compliant emails */\n"
+"export const rfc5322Email =\n"
+"  "
+"/^(([^<>()[]\\.,;:s@\"]+(.[^<>()[]\\.,;:s@\"]+)*)|(\".+\"))@(([[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}])|(([a-zA-Z-0-9]+.)+[a-zA-Z]{2,}))$/;"
+"\n"
+"\n"
+"/** A loose regex that allows Unicode characters, enforces length limits,"
+" and that's about it. */\n"
+"export const unicodeEmail = /^[^s@\"]{1,64}@[^s@]{1,255}$/u;\n"
+"export const idnEmail = unicodeEmail;\n"
+"\n"
+"export const browserEmail: RegExp =\n"
+"  /^[a-zA-Z0-9.!#$%&'*+/=?^_"
+msgstr ""
 
 msgid "© Layer attribution"
 msgstr "© Atribuce vrstvy"
