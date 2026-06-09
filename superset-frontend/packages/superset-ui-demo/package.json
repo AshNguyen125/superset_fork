@@ -57,7 +57,7 @@
     "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
     "@storybook/react-webpack5": "^8.6.15",
-    "babel-loader": "^10.0.0",
+    "babel-loader": "^10.1.1",
     "fork-ts-checker-webpack-plugin": "^9.1.0",
     "ts-loader": "^9.5.4",
     "typescript": "^5.9.3"
