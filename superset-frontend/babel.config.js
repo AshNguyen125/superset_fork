@@ -88,6 +88,7 @@ module.exports = {
         'babel-plugin-dynamic-import-node',
         '@babel/plugin-transform-modules-commonjs',
         '@babel/plugin-transform-export-namespace-from',
+        '@babel/plugin-transform-class-static-block',
       ],
     },
     // build instrumented code for testing code coverage with Cypress
