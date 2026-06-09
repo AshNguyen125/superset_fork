@@ -847,17 +847,39 @@ class Superset(BaseSupersetView):
 
     @has_access
     @expose("/dashboard/p/<key>/", methods=("GET",))
-    def dashboard_permalink(
+    def dashboard_permalink(  # noqa: C901
         self,
         key: str,
     ) -> FlaskResponse:
         try:
             value = GetDashboardPermalinkCommand(key).run()
         except (DashboardPermalinkGetFailedError, DashboardAccessDeniedError) as ex:
+            if not get_current_user():
+                return redirect_to_login()
             return json_error_response(__("Error: %(msg)s", msg=ex.message), status=404)
         if not value:
+            if not get_current_user():
+                return redirect_to_login()
             return json_error_response(_("permalink state not found"), status=404)
 
+        dashboard = Dashboard.get(value["dashboardId"])
+
+        if not dashboard:
+            if not get_current_user():
+                return redirect_to_login()
+            abort(404)
+
+        # Redirect anonymous users to login for unpublished dashboards,
+        # in the edge case where a dataset has been shared with public
+        if not get_current_user() and not dashboard.published:
+            return redirect_to_login()
+
+        try:
+            dashboard.raise_for_access()
+        except SupersetSecurityException:
+            if not get_current_user():
+                return redirect_to_login()
+            abort(404)
         dashboard_id, state = value["dashboardId"], value.get("state", {})
         url = url_for(
             "Superset.dashboard", dashboard_id_or_slug=dashboard_id, permalink_key=key
