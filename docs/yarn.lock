@@ -3430,10 +3430,10 @@
   resolved "https://registry.yarnpkg.com/@storybook/icons/-/icons-1.4.0.tgz#7cf7ab3dfb41943930954c4ef493a73798d8b31d"
   integrity sha512-Td73IeJxOyalzvjQL+JXx72jlIYHgs+REaHiREOqfpo3A2AYYG71AUbcv+lg7mEDIweKVCxsMQ0UKo634c8XeA==
 
-"@storybook/preview-api@^8.6.15":
-  version "8.6.15"
-  resolved "https://registry.yarnpkg.com/@storybook/preview-api/-/preview-api-8.6.15.tgz#cd1e0d17b1d9a452bf4da081c05924be7edac22c"
-  integrity sha512-oqsp8f7QekB9RzpDqOXZQcPPRXXd/mTsnZSdAAQB/pBVqUpC9h/y5hgovbYnJ6DWXcpODbMwH+wbJHZu5lvm+w==
+"@storybook/preview-api@^8.6.18":
+  version "8.6.18"
+  resolved "https://registry.yarnpkg.com/@storybook/preview-api/-/preview-api-8.6.18.tgz#2f5eb75c7587035a07670457c09b67208aa16735"
+  integrity sha512-joXRXh3GdVvzhbfIgmix1xs90p8Q/nja7AhEAC2egn5Pl7SKsIYZUCYI6UdrQANb2myg9P552LKXfPect8llKg==
 
 "@storybook/react-dom-shim@8.6.15":
   version "8.6.15"
