@@ -25,6 +25,7 @@ from flask import g  # noqa: F401
 from superset import db, security_manager
 from superset.commands.chart.create import CreateChartCommand
 from superset.commands.chart.exceptions import (
+    ChartForbiddenError,
     ChartNotFoundError,
     WarmUpCacheChartNotFoundError,
 )
@@ -451,6 +452,36 @@ class TestChartsUpdateCommand(SupersetTestCase):
         assert chart.query_context == query_context
         assert len(chart.owners) == 1
         assert chart.owners[0] == admin
+
+    @patch("superset.commands.chart.update.g")
+    @patch("superset.utils.core.g")
+    @patch("superset.security.manager.g")
+    @pytest.mark.usefixtures("load_energy_table_with_slice")
+    def test_query_context_update_requires_chart_access(
+        self, mock_sm_g, mock_g, mock_u_g
+    ):
+        """
+        A query_context-only update relaxes the ownership requirement but must
+        still require access to the chart. A non-owner with no access to the
+        chart (nor its datasource) is rejected -- either by the DAO access
+        filter (ChartNotFoundError) or by the explicit access check
+        (ChartForbiddenError), depending on which layer denies first.
+        """
+        chart = db.session.query(Slice).all()[0]
+        pk = chart.id
+        admin = security_manager.find_user(username="admin")
+        chart.owners = [admin]
+        db.session.commit()
+
+        # gamma has no access to the energy datasource and does not own the chart
+        gamma = security_manager.find_user(username="gamma")
+        mock_g.user = mock_sm_g.user = mock_u_g.user = gamma
+        json_obj = {
+            "query_context_generation": True,
+            "query_context": json.dumps({"foo": "bar"}),
+        }
+        with pytest.raises((ChartForbiddenError, ChartNotFoundError)):
+            UpdateChartCommand(pk, json_obj).run()
 
     @patch("superset.commands.chart.update.g")
     @patch("superset.utils.core.g")
