@@ -23,8 +23,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any, List, Literal
 
-logger = logging.getLogger(__name__)
-
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -47,6 +45,8 @@ from superset.mcp_service.utils.schema_utils import (
     parse_json_or_list,
     parse_json_or_model_list,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_USER_COLUMNS = ["id", "username", "first_name", "last_name", "active"]
 
@@ -129,7 +129,6 @@ class UserInfo(BaseModel):
                 logger.debug(
                     "Skipping role with detached instance in UserInfo.roles coercion"
                 )
-                continue
         return result
 
     changed_on: str | datetime | None = Field(
