@@ -34,7 +34,10 @@ from superset.commands.dataset.exceptions import (
     MultiCatalogDisabledValidationError,
 )
 from superset.commands.exceptions import ImportFailedError
+from superset.commands.importers.v1.utils import find_existing_for_import
 from superset.connectors.sqla.models import SqlaTable
+from superset.constants import SKIP_VISIBILITY_FILTER_CLASSES
+from superset.daos.dataset import DatasetDAO
 from superset.exceptions import SupersetSecurityException
 from superset.models.core import Database
 from superset.sql.parse import Table
@@ -140,27 +143,148 @@ def import_dataset(  # noqa: C901
     force_data: bool = False,
     ignore_permissions: bool = False,
 ) -> SqlaTable:
+    """Import a dataset from a config dict, handling existing matches.
+
+    Permission model for an existing UUID match:
+
+    +--------------+---------------+---------------------+-----------------+
+    | Existing row | overwrite arg | Caller has perms?   | Outcome         |
+    +==============+===============+=====================+=================+
+    | alive        | False         | (n/a)               | return existing |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write + owner   | UPDATE in place |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write + owner   | restore + UPDATE|
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | not can_write       | raise (Case B)  |
+    +--------------+---------------+---------------------+-----------------+
+
+    Re-importing a soft-deleted UUID is implicitly a restore-with-update:
+    the user is bringing the dataset back by uploading it again. We apply
+    the same ownership check as the explicit overwrite path so non-owners
+    cannot resurrect via re-import, and we raise rather than silently
+    returning a soft-deleted row to callers without write permission
+    (which would let them reattach charts/dashboards to a deleted dataset).
+    """
     can_write = ignore_permissions or security_manager.can_access(
         "can_write",
         "Dataset",
     )
-    existing = db.session.query(SqlaTable).filter_by(uuid=config["uuid"]).first()
+    # `user` is None for background / example-loader paths (no Flask request
+    # user). Combined with ``can_write=True`` (typically from
+    # ``ignore_permissions=True``), the ownership check below is intentionally
+    # skipped because the caller has already established trust at the command
+    # level. This matches pre-existing overwrite behaviour but now also applies
+    # to soft-deleted matches via ``needs_mutation``.
     user = get_user()
-    if existing:
-        if overwrite and can_write and user:
+    # Tracks whether we entered the soft-deleted mutation path so the
+    # downstream `sync` decision (below) can reflect that an
+    # implicit-restore re-import is a clean replacement, not a merge.
+    is_soft_deleted_match = False
+
+    if existing := find_existing_for_import(SqlaTable, config["uuid"]):
+        is_soft_deleted = existing.deleted_at is not None
+        needs_mutation = overwrite or is_soft_deleted
+        if needs_mutation and can_write and user:
             if user not in existing.owners and not security_manager.is_admin():
                 raise ImportFailedError(
-                    "A dataset already exists and user doesn't "
-                    "have permissions to overwrite it"
+                    "A dataset already exists and user doesn't have "
+                    "permissions to "
+                    f"{'restore' if is_soft_deleted else 'overwrite'} it"
                 )
-        if not overwrite or not can_write:
+        if is_soft_deleted and not can_write:
+            # Case B: would-be restore-via-import without write permission.
+            # Raise rather than silently returning the soft-deleted row,
+            # which would let callers reattach charts to a deleted dataset
+            # and produce broken charts.
+            #
+            # Keyed on ``is_soft_deleted`` rather than ``needs_mutation``: an
+            # *active* row imported with overwrite=True but no can_write is not
+            # a restore, so it must fall through to ``return existing`` below
+            # (the pre-soft-delete overwrite-without-permission behaviour)
+            # instead of raising the restore error.
+            raise ImportFailedError(
+                "Dataset was deleted and re-import requires can_write "
+                "permission to restore it"
+            )
+        if not needs_mutation or not can_write:
             return existing
+        # Mutation path. Restore a soft-deleted match in place rather
+        # than hard-delete-and-replace: a hard delete would cascade
+        # through the chart back-reference and the delete-orphan
+        # child relationships (table_columns, sql_metrics), which the
+        # import would then need to reconstruct.
+        #
+        # How the restore lands as an UPDATE: clearing
+        # existing.deleted_at marks the in-session row dirty and the
+        # explicit flush emits the deleted_at = NULL UPDATE before
+        # SqlaTable.import_from_dict (below) does its own query-by-
+        # uuid lookup. Without the flush we would be relying on
+        # autoflush ahead of that internal query — correct under
+        # default session config but a hidden contract; the explicit
+        # flush makes it robust. The lookup then finds the now-live
+        # row (the listener filters deleted_at IS NULL) and
+        # import_from_dict applies the config as field updates on the
+        # existing object, preserving the PK. Note: config["id"] is
+        # set defensively, but ImportExportMixin.import_from_dict
+        # strips it today because SqlaTable.export_fields does not
+        # contain "id"; what actually binds to the existing row is
+        # the uuid uniqueness constraint used inside import_from_dict.
+        if is_soft_deleted:
+            # Before clearing ``deleted_at``, refuse if another active dataset
+            # already references the same physical table. Otherwise the
+            # restore would produce two live ``SqlaTable`` rows for one
+            # physical table, breaking the logical-uniqueness contract. The
+            # shared DAO helper relies on the SoftDeleteMixin listener to
+            # consider only active rows, excludes ``existing`` itself via
+            # ``id !=``, and normalizes the catalog the same way create/update
+            # uniqueness does.
+            if DatasetDAO.has_active_logical_duplicate(existing):
+                raise ImportFailedError(
+                    "Dataset cannot be restored via re-import because another "
+                    "active dataset already references the same physical table"
+                )
+            # Snapshot ``deleted_at`` so we can roll back the clear if the
+            # downstream ``import_from_dict`` hits the legacy
+            # ``MultipleResultsFound`` fallback. Without the rollback, an
+            # ambiguous import would leave the dataset half-restored
+            # (``deleted_at = None`` but upload contents unapplied).
+            original_deleted_at = existing.deleted_at
+            existing.deleted_at = None
+            db.session.flush()
+            is_soft_deleted_match = True
         config["id"] = existing.id
 
     elif not can_write:
         raise ImportFailedError(
             "Dataset doesn't exist and user doesn't have permission to create datasets"
         )
+    else:
+        # Creating a brand-new dataset (no UUID match). A soft-deleted dataset
+        # may still claim this physical table; ``import_from_dict`` cannot see it
+        # (the visibility filter hides soft-deleted rows), so without this guard
+        # the import would create an active twin of a hidden dataset. The REST
+        # create path blocks the same collision via ``validate_uniqueness`` —
+        # mirror it here and direct the user to restore the existing dataset
+        # instead of leaving two rows for one physical table.
+        database = (
+            db.session.query(Database).filter_by(id=config["database_id"]).first()
+        )
+        if database is not None and DatasetDAO.find_soft_deleted_logical_duplicate(
+            database,
+            Table(config["table_name"], config.get("schema"), config.get("catalog")),
+        ):
+            raise ImportFailedError(
+                "Dataset cannot be imported because a soft-deleted dataset "
+                "already references the same physical table; restore that "
+                "dataset instead of importing a duplicate"
+            )
 
     # Trusted imports (e.g. example loading) carry curated configs; only
     # untrusted user imports validate the catalog, like the access checks below.
@@ -187,7 +311,12 @@ def import_dataset(  # noqa: C901
                     attributes["extra"] = None
 
     # should we delete columns and metrics not present in the current import?
-    sync = ["columns", "metrics"] if overwrite else []
+    # Restore-via-import of a soft-deleted dataset is implicitly a clean
+    # replacement (Option C): the user is bringing the dataset back by
+    # uploading it again, so children present in the live DB but absent
+    # from the upload should be removed, not silently merged. This matches
+    # what an explicit overwrite would do.
+    sync = ["columns", "metrics"] if (overwrite or is_soft_deleted_match) else []
 
     # should we also load data into the dataset?
     data_uri = config.get("data")
@@ -203,8 +332,39 @@ def import_dataset(  # noqa: C901
         # fail because the UUID match will try to update `examples.NULL.users` to
         # `examples.public.users`, resulting in a conflict.
         #
-        # When that happens, we return the original dataset, unmodified.
-        dataset = db.session.query(SqlaTable).filter_by(uuid=config["uuid"]).one()
+        # In the soft-deleted-restore case we cannot silently return
+        # the unmodified row: ``existing.deleted_at`` was already
+        # cleared above and the operator expects a restore-with-update.
+        # Returning the row without applying the upload would produce a
+        # half-restored state. Roll back the ``deleted_at`` clear and
+        # raise so the operator can resolve the legacy-NULL-schema
+        # ambiguity before re-uploading.
+        if is_soft_deleted_match:
+            # ``is_soft_deleted_match`` is only ever set inside the
+            # ``if existing := ...`` walrus block, so ``existing`` is
+            # guaranteed non-None here. The assert pins the invariant
+            # for mypy.
+            assert existing is not None
+            existing.deleted_at = original_deleted_at
+            db.session.flush()
+            raise ImportFailedError(
+                "Soft-deleted dataset has an ambiguous legacy duplicate "
+                "(likely from the NULL-schema migration). Cannot restore-"
+                "and-update via re-import; resolve the duplicate manually "
+                "before retrying."
+            ) from None
+        # On the non-soft-deleted overwrite path the legacy contract
+        # holds: return the existing row unmodified. Bypasses the
+        # visibility filter so a soft-deleted duplicate can be located
+        # too — without the bypass the listener would hide the row and
+        # the ``.one()`` would raise NoResultFound, masking the
+        # original MultipleResultsFound.
+        dataset = (
+            db.session.query(SqlaTable)
+            .execution_options(**{SKIP_VISIBILITY_FILTER_CLASSES: {SqlaTable}})
+            .filter_by(uuid=config["uuid"])
+            .one()
+        )
 
     if dataset.id is None:
         db.session.flush()
@@ -229,7 +389,7 @@ def import_dataset(  # noqa: C901
     if data_uri and (not table_exists or force_data):
         load_data(data_uri, dataset, dataset.database)
 
-    if (user := get_user()) and user not in dataset.owners:
+    if user and user not in dataset.owners:
         dataset.owners.append(user)
 
     return dataset
