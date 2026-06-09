@@ -20,6 +20,7 @@ from typing import Any
 
 from superset import db, security_manager
 from superset.commands.exceptions import ImportFailedError
+from superset.commands.importers.v1.utils import find_existing_for_import
 from superset.models.dashboard import Dashboard
 from superset.utils import json
 from superset.utils.core import get_user
@@ -276,23 +277,115 @@ def import_dashboard(  # noqa: C901
     overwrite: bool = False,
     ignore_permissions: bool = False,
 ) -> Dashboard:
+    """Import a dashboard from a config dict, handling existing matches.
+
+    Permission model for an existing UUID match:
+
+    +--------------+---------------+---------------------+-----------------+
+    | Existing row | overwrite arg | Caller has perms?   | Outcome         |
+    +==============+===============+=====================+=================+
+    | alive        | False         | (n/a)               | return existing |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write + owner   | UPDATE in place |
+    +--------------+---------------+---------------------+-----------------+
+    | alive        | True          | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write + owner   | restore + UPDATE|
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | can_write,          | raise           |
+    |              |               | not owner/admin     |                 |
+    +--------------+---------------+---------------------+-----------------+
+    | soft-deleted | False or True | not can_write       | raise (Case B)  |
+    +--------------+---------------+---------------------+-----------------+
+
+    "owner" in the matrix above means the caller is in ``existing.owners``
+    OR is an admin (the ownership check is bypassed for admins). The
+    mutation path also requires ``security_manager.can_access_dashboard
+    (existing)`` to pass — a per-row RBAC check distinct from the
+    ``can_write`` model-level grant.
+
+    Re-importing a soft-deleted UUID is implicitly a restore-with-update:
+    the user is bringing the dashboard back by uploading it again. We apply
+    the same ownership check as the explicit overwrite path so non-owners
+    cannot resurrect via re-import, and we raise rather than silently
+    returning a soft-deleted row to callers without write permission.
+    """
     can_write = ignore_permissions or security_manager.can_access(
         "can_write",
         "Dashboard",
     )
-    existing = db.session.query(Dashboard).filter_by(uuid=config["uuid"]).first()
+    # `user` is None for background / example-loader paths (no Flask request
+    # user). Combined with ``can_write=True`` (typically from
+    # ``ignore_permissions=True``), the ownership check below is intentionally
+    # skipped because the caller has already established trust at the command
+    # level. This matches pre-existing overwrite behaviour but now also applies
+    # to soft-deleted matches via ``needs_mutation``.
     user = get_user()
-    if existing:
-        if overwrite and can_write and user:
+
+    if existing := find_existing_for_import(Dashboard, config["uuid"]):
+        is_soft_deleted = existing.deleted_at is not None
+        needs_mutation = overwrite or is_soft_deleted
+        if needs_mutation and can_write and user:
             if not security_manager.can_access_dashboard(existing) or (
                 user not in existing.owners and not security_manager.is_admin()
             ):
                 raise ImportFailedError(
-                    "A dashboard already exists and user doesn't "
-                    "have permissions to overwrite it"
+                    "A dashboard already exists and user doesn't have "
+                    "permissions to "
+                    f"{'restore' if is_soft_deleted else 'overwrite'} it"
                 )
-        elif not overwrite or not can_write:
+        if is_soft_deleted and not can_write:
+            # Case B: would-be restore-via-import without write permission.
+            # Raise rather than silently returning the soft-deleted row.
+            #
+            # Keyed on ``is_soft_deleted`` rather than ``needs_mutation``: an
+            # *active* row imported with overwrite=True but no can_write is not
+            # a restore, so it must fall through to ``return existing`` below
+            # (the pre-soft-delete overwrite-without-permission behaviour)
+            # instead of raising the restore error.
+            raise ImportFailedError(
+                "Dashboard was deleted and re-import requires can_write "
+                "permission to restore it"
+            )
+        if not needs_mutation or not can_write:
             return existing
+        # Mutation path. Restore a soft-deleted match in place rather
+        # than hard-delete-and-replace: a hard delete would cascade
+        # through dashboard_slices junctions and DashboardRoles / owner
+        # / tag associations, breaking the relationships the import
+        # would then need to reconstruct.
+        #
+        # How the restore lands as an UPDATE: clearing
+        # existing.deleted_at marks the in-session row dirty and the
+        # explicit flush emits the deleted_at = NULL UPDATE before
+        # Dashboard.import_from_dict (below) does its own query-by-uuid
+        # lookup. Without the flush we would be relying on autoflush
+        # ahead of that internal query — correct under default session
+        # config but a hidden contract; the explicit flush makes it
+        # robust. The lookup then finds the now-live row (the listener
+        # filters deleted_at IS NULL) and import_from_dict applies the
+        # config as field updates on the existing object, preserving
+        # the PK. Note: config["id"] is set defensively, but
+        # ImportExportMixin.import_from_dict strips it today because
+        # Dashboard.export_fields does not contain "id"; what actually
+        # binds to the existing row is the uuid uniqueness constraint
+        # used inside import_from_dict.
+        if is_soft_deleted:
+            existing.deleted_at = None
+            # Apply the incoming slug to the existing row before flushing.
+            # On the partial-index dialects (Postgres / MySQL 8.0.13+) the
+            # active-slug constraint sees the row's post-flush state. If
+            # the old slug was claimed by another active dashboard while
+            # this one was soft-deleted, the operator would resolve it by
+            # uploading a YAML with a different (safe) slug — the flush
+            # below must reflect that change, or the implicit-restore
+            # path fails on the stale DB slug even though the upload was
+            # supposed to fix it. Pre-applying ``slug`` lets the documented
+            # restore-and-update flow work as the docstring describes.
+            if "slug" in config:
+                existing.slug = config["slug"]
+            db.session.flush()
         config["id"] = existing.id
     elif not can_write:
         raise ImportFailedError(
@@ -326,7 +419,7 @@ def import_dashboard(  # noqa: C901
     if dashboard.id is None:
         db.session.flush()
 
-    if (user := get_user()) and user not in dashboard.owners:
+    if user and user not in dashboard.owners:
         dashboard.owners.append(user)
 
     # Re-attach DASHBOARD_RBAC role assignments by name. Role IDs are
