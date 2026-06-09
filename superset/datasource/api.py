@@ -31,7 +31,13 @@ from superset.exceptions import SupersetSecurityException
 from superset.extensions import cache_manager
 from superset.superset_typing import FlaskResponse
 from superset.utils import json
-from superset.utils.core import apply_max_row_limit, DatasourceType, SqlExpressionType
+from superset.utils.core import (
+    apply_max_row_limit,
+    DatasourceType,
+    get_user_id,
+    parse_boolean_string,
+    SqlExpressionType,
+)
 from superset.views.base_api import BaseSupersetApi, statsd_metrics
 
 logger = logging.getLogger(__name__)
@@ -51,8 +57,9 @@ class DatasourceRestApi(BaseSupersetApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        f".get_column_values",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.get_column_values"
+        ),
         log_to_statsd=False,
     )
     def get_column_values(
@@ -124,13 +131,59 @@ class DatasourceRestApi(BaseSupersetApi):
 
         row_limit = apply_max_row_limit(app.config["FILTER_SELECT_ROW_LIMIT"])
         denormalize_column = not datasource.normalize_columns
+
+        # Cache distinct column-value results so a dashboard with many filters
+        # backed by the same (often heavy) virtual dataset doesn't re-execute
+        # the wrapping query per filter (#39342).
+        #
+        # Key fields:
+        # - ``user`` — baseline per-user isolation. ``get_user_id()`` returns
+        #   ``None`` for guest/anonymous sessions, so this field alone is not
+        #   sufficient for RLS safety.
+        # - ``rls`` — full RLS fingerprint via
+        #   ``security_manager.get_rls_cache_key`` (the canonical helper used
+        #   by viz.py and query_context_processor.py). Covers both regular
+        #   RLS policy changes and guest-token RLS, so embedded sessions
+        #   with different guest tokens never share cached values even when
+        #   ``get_user_id()`` is ``None`` for both.
+        # - ``changed_on`` — auto-busts cached entries when the dataset's
+        #   underlying SQL is edited.
+        force = parse_boolean_string(request.args.get("force"))
+        cache_key = (
+            "col_values:"
+            + hashlib.sha256(
+                json.dumps(
+                    {
+                        "uid": datasource.uid,
+                        "col": column_name,
+                        "limit": row_limit,
+                        "denorm": denormalize_column,
+                        "user": get_user_id(),
+                        "rls": security_manager.get_rls_cache_key(datasource),
+                        "changed_on": str(getattr(datasource, "changed_on", "")),
+                    },
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+        )
+
+        if (
+            not force
+            and (cached := cache_manager.data_cache.get(cache_key)) is not None
+        ):
+            logger.debug(
+                "column-values cache HIT: uid=%s col=%s", datasource.uid, column_name
+            )
+            response = self.response(200, result=cached)
+            response.headers["X-Cache-Status"] = "HIT"
+            return response
+
         try:
             payload = datasource.values_for_column(
                 column_name=column_name,
                 limit=row_limit,
                 denormalize_column=denormalize_column,
             )
-            return self.response(200, result=payload)
         except KeyError:
             return self.response(
                 400, message=f"Column name {column_name} does not exist"
@@ -144,6 +197,31 @@ class DatasourceRestApi(BaseSupersetApi):
                 ),
             )
 
+        # Warn before caching very large payloads (high-cardinality columns)
+        # so operators can spot cache-memory pressure before Redis OOMs.
+        # Threshold is operator-tunable; defaults to 100k rows.
+        warn_threshold = app.config.get("FILTER_VALUES_CACHE_WARN_THRESHOLD", 100_000)
+        if (payload_size := len(payload)) > warn_threshold:
+            logger.warning(
+                "column-values payload exceeds cache-warn threshold: "
+                "uid=%s col=%s rows=%d threshold=%d",
+                datasource.uid,
+                column_name,
+                payload_size,
+                warn_threshold,
+            )
+
+        timeout = datasource.cache_timeout or app.config.get(
+            "CACHE_DEFAULT_TIMEOUT", 300
+        )
+        cache_manager.data_cache.set(cache_key, payload, timeout=timeout)
+        logger.debug(
+            "column-values cache MISS: uid=%s col=%s", datasource.uid, column_name
+        )
+        response = self.response(200, result=payload)
+        response.headers["X-Cache-Status"] = "MISS"
+        return response
+
     @expose(
         "/<datasource_type>/<int:datasource_id>/validate_expression/",
         methods=("POST",),
@@ -152,8 +230,9 @@ class DatasourceRestApi(BaseSupersetApi):
     @safe
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        f".validate_expression",
+        action=lambda self, *args, **kwargs: (
+            f"{self.__class__.__name__}.validate_expression"
+        ),
         log_to_statsd=False,
     )
     def validate_expression(
