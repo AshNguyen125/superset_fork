@@ -14,13 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import re
 from typing import Any, Optional, Union
 
 from croniter import croniter
 from flask import current_app
 from flask_babel import gettext as _
 from marshmallow import EXCLUDE, fields, Schema, validate, validates, validates_schema
-from marshmallow.validate import Length, Range, ValidationError
+from marshmallow.validate import Email, Length, Range, ValidationError
 from pytz import all_timezones
 
 from superset.reports.models import (
@@ -121,10 +122,28 @@ class ValidatorConfigJSONSchema(Schema):
 
 
 class ReportRecipientConfigJSONSchema(Schema):
-    # TODO if email check validity
     target = fields.String()
     ccTarget = fields.String()  # noqa: N815
     bccTarget = fields.String()  # noqa: N815
+
+
+def _validate_email_list(address_string: str, field_name: str) -> None:
+    """Validate that a comma/semicolon-separated string contains valid emails."""
+    email_validator = Email()
+    addresses = [
+        addr.strip() for addr in re.split(r"[,;\s]+", address_string) if addr.strip()
+    ]
+    if not addresses:
+        raise ValidationError(
+            {field_name: [f"At least one email address is required in '{field_name}'."]}
+        )
+    for addr in addresses:
+        try:
+            email_validator(addr)
+        except ValidationError as exc:
+            raise ValidationError(
+                {field_name: [f"Invalid email address: {addr}"]}
+            ) from exc
 
 
 class ReportRecipientSchema(Schema):
@@ -137,6 +156,21 @@ class ReportRecipientSchema(Schema):
         ),
     )
     recipient_config_json = fields.Nested(ReportRecipientConfigJSONSchema)
+
+    @validates_schema
+    def validate_email_recipients(self, data: dict[str, Any], **kwargs: Any) -> None:
+        """Validate email addresses when recipient type is Email."""
+        if data.get("type") != ReportRecipientType.EMAIL:
+            return
+        config = data.get("recipient_config_json", {})
+        if not config:
+            return
+        if target := config.get("target"):
+            _validate_email_list(target, "target")
+        if cc_target := config.get("ccTarget"):
+            _validate_email_list(cc_target, "ccTarget")
+        if bcc_target := config.get("bccTarget"):
+            _validate_email_list(bcc_target, "bccTarget")
 
 
 class ReportSchedulePostSchema(Schema):
