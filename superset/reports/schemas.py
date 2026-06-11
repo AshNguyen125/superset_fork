@@ -136,9 +136,7 @@ def _validate_email_addresses(addresses: str, field_name: str) -> None:
     for addr in re.split(r",|\s|;", addresses):
         addr = addr.strip()
         if addr and not _EMAIL_RE.match(addr):
-            raise ValidationError(
-                {field_name: [f"Invalid email address: {addr}"]}
-            )
+            raise ValidationError({field_name: [f"Invalid email address: {addr}"]})
 
 
 class ReportRecipientSchema(Schema):
@@ -153,9 +151,7 @@ class ReportRecipientSchema(Schema):
     recipient_config_json = fields.Nested(ReportRecipientConfigJSONSchema)
 
     @validates_schema
-    def validate_email_recipients(
-        self, data: dict[str, Any], **kwargs: Any
-    ) -> None:
+    def validate_email_recipients(self, data: dict[str, Any], **kwargs: Any) -> None:
         if data.get("type") != ReportRecipientType.EMAIL:
             return
         config = data.get("recipient_config_json", {})
