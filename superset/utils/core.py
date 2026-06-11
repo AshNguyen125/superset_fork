@@ -1819,7 +1819,8 @@ def extract_column_dtype(col: TableColumn) -> GenericDataType:
         return GenericDataType.TEMPORAL
     if col.is_numeric:
         return GenericDataType.NUMERIC
-    # TODO: add check for boolean data type when proper support is added
+    if col.is_boolean:
+        return GenericDataType.BOOLEAN
     return GenericDataType.STRING
 
 
