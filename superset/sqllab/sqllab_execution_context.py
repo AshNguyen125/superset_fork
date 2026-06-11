@@ -25,6 +25,7 @@ from flask import g
 from sqlalchemy.orm.exc import DetachedInstanceError
 
 from superset import is_feature_enabled
+from superset.exceptions import SupersetException
 from superset.models.sql_lab import Query
 from superset.sql.parse import CTASMethod
 from superset.utils import core as utils, json
@@ -137,8 +138,10 @@ class SqlJsonExecutionContext:  # pylint: disable=too-many-instance-attributes
         return get_cta_schema_name(database, g.user, self.schema, self.sql)
 
     def _validate_db(self, database: Database) -> None:
-        # TODO validate db.id is equal to self.database_id
-        pass
+        if database.id != self.database_id:
+            raise SupersetException(
+                f"Database ID mismatch: expected {self.database_id}, got {database.id}"
+            )
 
     def get_execution_result(self) -> SqlResults | None:
         return self._sql_result
