@@ -358,6 +358,10 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
 
     _date_trunc_functions: dict[str, str] = {}
     _time_grain_expressions: dict[str | None, str] = {}
+    _time_grain_expressions_cache: dict[
+        tuple[type, tuple[tuple[str | None, str], ...], tuple[str, ...]],
+        dict[str | None, str],
+    ] = {}
     _default_column_type_mappings: tuple[ColumnTypeMapping, ...] = (
         (
             re.compile(r"^string", re.IGNORECASE),
@@ -1143,17 +1147,24 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
         Return a dict of all supported time grains including any potential added grains
         but excluding any potentially disabled grains in the config file.
 
+        Uses a per-class cache to avoid rebuilding and sorting the dict on every call.
+
         :return: All time grain expressions supported by the engine
         """
-        # TODO: use @memoize decorator or similar to avoid recomputation on every call
-        time_grain_expressions = cls._time_grain_expressions.copy()
         grain_addon_expressions = app.config["TIME_GRAIN_ADDON_EXPRESSIONS"]
-        time_grain_expressions.update(grain_addon_expressions.get(cls.engine, {}))
+        addons = grain_addon_expressions.get(cls.engine, {})
         denylist: list[str] = app.config["TIME_GRAIN_DENYLIST"]
+        cache_key = (cls, tuple(sorted(addons.items())), tuple(sorted(denylist)))
+
+        if cache_key in cls._time_grain_expressions_cache:
+            return cls._time_grain_expressions_cache[cache_key]
+
+        time_grain_expressions = cls._time_grain_expressions.copy()
+        time_grain_expressions.update(addons)
         for key in denylist:
             time_grain_expressions.pop(key, None)
 
-        return dict(
+        result = dict(
             sorted(
                 time_grain_expressions.items(),
                 key=lambda x: (
@@ -1164,6 +1175,8 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
                 ),
             )
         )
+        cls._time_grain_expressions_cache[cache_key] = result
+        return result
 
     @classmethod
     def fetch_data(cls, cursor: Any, limit: int | None = None) -> list[tuple[Any, ...]]:
