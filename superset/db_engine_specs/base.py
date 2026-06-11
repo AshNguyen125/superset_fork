@@ -358,7 +358,10 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
 
     _date_trunc_functions: dict[str, str] = {}
     _time_grain_expressions: dict[str | None, str] = {}
-    _time_grain_expressions_cache: dict[type, dict[str | None, str]] = {}
+    _time_grain_expressions_cache: dict[
+        tuple[type, tuple[tuple[str | None, str], ...], tuple[str, ...]],
+        dict[str | None, str],
+    ] = {}
     _default_column_type_mappings: tuple[ColumnTypeMapping, ...] = (
         (
             re.compile(r"^string", re.IGNORECASE),
@@ -1148,13 +1151,16 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
 
         :return: All time grain expressions supported by the engine
         """
-        if cls in cls._time_grain_expressions_cache:
-            return cls._time_grain_expressions_cache[cls]
+        grain_addon_expressions = app.config["TIME_GRAIN_ADDON_EXPRESSIONS"]
+        addons = grain_addon_expressions.get(cls.engine, {})
+        denylist: list[str] = app.config["TIME_GRAIN_DENYLIST"]
+        cache_key = (cls, tuple(sorted(addons.items())), tuple(sorted(denylist)))
+
+        if cache_key in cls._time_grain_expressions_cache:
+            return cls._time_grain_expressions_cache[cache_key]
 
         time_grain_expressions = cls._time_grain_expressions.copy()
-        grain_addon_expressions = app.config["TIME_GRAIN_ADDON_EXPRESSIONS"]
-        time_grain_expressions.update(grain_addon_expressions.get(cls.engine, {}))
-        denylist: list[str] = app.config["TIME_GRAIN_DENYLIST"]
+        time_grain_expressions.update(addons)
         for key in denylist:
             time_grain_expressions.pop(key, None)
 
@@ -1169,7 +1175,7 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
                 ),
             )
         )
-        cls._time_grain_expressions_cache[cls] = result
+        cls._time_grain_expressions_cache[cache_key] = result
         return result
 
     @classmethod
