@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import re
 from typing import Any, Optional, Union
 
 from croniter import croniter
@@ -121,10 +122,23 @@ class ValidatorConfigJSONSchema(Schema):
 
 
 class ReportRecipientConfigJSONSchema(Schema):
-    # TODO if email check validity
     target = fields.String()
     ccTarget = fields.String()  # noqa: N815
     bccTarget = fields.String()  # noqa: N815
+
+
+# RFC 5322 simplified email pattern
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+
+
+def _validate_email_addresses(addresses: str, field_name: str) -> None:
+    """Validate a semicolon/comma/space-separated list of email addresses."""
+    for addr in re.split(r",|\s|;", addresses):
+        addr = addr.strip()
+        if addr and not _EMAIL_RE.match(addr):
+            raise ValidationError(
+                {field_name: [f"Invalid email address: {addr}"]}
+            )
 
 
 class ReportRecipientSchema(Schema):
@@ -137,6 +151,18 @@ class ReportRecipientSchema(Schema):
         ),
     )
     recipient_config_json = fields.Nested(ReportRecipientConfigJSONSchema)
+
+    @validates_schema
+    def validate_email_recipients(
+        self, data: dict[str, Any], **kwargs: Any
+    ) -> None:
+        if data.get("type") != ReportRecipientType.EMAIL:
+            return
+        config = data.get("recipient_config_json", {})
+        for field_name in ("target", "ccTarget", "bccTarget"):
+            value = config.get(field_name)
+            if value:
+                _validate_email_addresses(value, field_name)
 
 
 class ReportSchedulePostSchema(Schema):
