@@ -137,8 +137,10 @@ class SqlJsonExecutionContext:  # pylint: disable=too-many-instance-attributes
         return get_cta_schema_name(database, g.user, self.schema, self.sql)
 
     def _validate_db(self, database: Database) -> None:
-        # TODO validate db.id is equal to self.database_id
-        pass
+        if database.id != self.database_id:
+            raise ValueError(
+                f"Database id mismatch: expected {self.database_id}, got {database.id}"
+            )
 
     def get_execution_result(self) -> SqlResults | None:
         return self._sql_result
